@@ -6,15 +6,13 @@ const CELERATION_ANGLE = 34;
 const LOWEST_POWER = -3;
 const HIGHEST_POWER = 3;
 
-const MARGIN = { top: 30, right: 30, bottom: 60, left: 80 };
+/**
+ * Width of one day in SVG units. The chart scales to fill its container, so
+ * this sets the proportions of the grid rather than its size on screen.
+ */
+export const DAY_WIDTH = 3;
 
-export interface ChartOptions {
-  /**
-   * Width of the grid in pixels. The height is derived from it so that a
-   * ×2 per week line keeps the standard 34° angle.
-   */
-  width?: number;
-}
+const MARGIN = { top: 12, right: 12, bottom: 30, left: 38 };
 
 /** Grid height that keeps the standard celeration angle for a given width. */
 export function chartHeight(width: number): number {
@@ -24,43 +22,62 @@ export function chartHeight(width: number): number {
   return (doublingHeight / Math.log10(2)) * cycles;
 }
 
-/** Renders an empty daily per-minute Standard Celeration Chart as an SVG string. */
-export function renderChart({ width = 900 }: ChartOptions = {}): string {
+/**
+ * Renders an empty daily per-minute Standard Celeration Chart as an SVG string.
+ * The SVG fills the width of its container and keeps its proportions.
+ */
+export function renderChart(): string {
+  const width = DAYS * DAY_WIDTH;
   const height = chartHeight(width);
   const x = dayScale({ left: 0, right: width });
   const y = frequencyScale({ top: 0, bottom: height });
+  // Each layer is drawn over the one before, so thick lines are never
+  // broken up by the thin lines that cross them.
+  const thinRows: string[] = [];
+  const thinColumns: string[] = [];
+  const thickRows: string[] = [];
+  const thickColumns: string[] = [];
   const parts: string[] = [];
-
-  for (let day = 0; day <= DAYS; day++) {
-    parts.push(line(x(day), 0, x(day), height, day % 7 === 0 ? "week" : "day"));
-  }
-  for (let day = 0; day <= DAYS; day += 14) {
-    parts.push(text(x(day), height + 20, String(day), "x-label"));
-  }
 
   for (let power = LOWEST_POWER; power <= HIGHEST_POWER; power++) {
     const decade = 10 ** power;
-    parts.push(line(0, y(decade), width, y(decade), "decade"));
-    parts.push(text(-10, y(decade) + 4, formatFrequency(decade), "y-label"));
+    thickRows.push(line(0, y(decade), width, y(decade), "decade"));
+    parts.push(text(-4, y(decade) + 2, formatFrequency(decade), "y-label"));
     if (power === HIGHEST_POWER) break;
     for (let n = 2; n <= 9; n++) {
-      parts.push(line(0, y(n * decade), width, y(n * decade), n === 5 ? "half" : "unit"));
+      const row = line(0, y(n * decade), width, y(n * decade), n === 5 ? "half" : "unit");
+      (n === 5 ? thickRows : thinRows).push(row);
     }
     const half = 5 * decade;
-    parts.push(text(-10, y(half) + 4, formatFrequency(half), "y-label half-label"));
+    parts.push(text(-4, y(half) + 1.5, formatFrequency(half), "y-label half-label"));
   }
 
-  parts.push(text(width / 2, height + 45, "Successive calendar days", "title"));
+  for (let day = 0; day <= DAYS; day++) {
+    if (day % 7 === 0) {
+      thickColumns.push(line(x(day), 0, x(day), height, "week"));
+    } else {
+      thinColumns.push(line(x(day), 0, x(day), height, "day"));
+    }
+  }
+  for (let day = 0; day <= DAYS; day += 14) {
+    parts.push(text(x(day), height + 9, String(day), "x-label"));
+  }
+
+  parts.push(text(width / 2, height + 21, "Successive calendar days", "title"));
   parts.push(
-    `<text class="title" transform="translate(-60 ${round(height / 2)}) rotate(-90)">Count per minute</text>`,
+    `<text class="title" transform="translate(-28 ${round(height / 2)}) rotate(-90)">Count per minute</text>`,
   );
 
   const totalWidth = width + MARGIN.left + MARGIN.right;
   const totalHeight = height + MARGIN.top + MARGIN.bottom;
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${round(totalWidth)} ${round(totalHeight)}" width="${round(totalWidth)}" height="${round(totalHeight)}">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${round(totalWidth)} ${round(totalHeight)}" style="display: block; width: 100%; height: auto">`,
     `<style>${STYLE}</style>`,
     `<g transform="translate(${MARGIN.left} ${MARGIN.top})">`,
+    ...thinRows,
+    ...thinColumns,
+    ...thickRows,
+    ...thickColumns,
     ...parts,
     `</g>`,
     `</svg>`,
@@ -68,15 +85,16 @@ export function renderChart({ width = 900 }: ChartOptions = {}): string {
 }
 
 const STYLE = `
-line { stroke: #4a9fd8; shape-rendering: crispEdges; }
-.day, .unit { stroke-width: 0.5; opacity: 0.5; }
-.half { stroke-width: 0.75; opacity: 0.8; }
-.week, .decade { stroke-width: 1.25; }
+/* Strokes are in screen pixels, so lines stay hairlines however far the chart is scaled. */
+line { stroke: #4a9fd8; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.day, .unit { stroke: #c4e0f4; }
+.half { stroke: #8cc4e9; }
+.week, .decade { stroke-width: 2; }
 text { font-family: system-ui, sans-serif; fill: #1f5f8b; }
-.x-label { font-size: 11px; text-anchor: middle; }
-.y-label { font-size: 11px; text-anchor: end; }
-.half-label { font-size: 9px; opacity: 0.8; }
-.title { font-size: 13px; text-anchor: middle; }
+.x-label { font-size: 5.5px; text-anchor: middle; }
+.y-label { font-size: 5.5px; text-anchor: end; }
+.half-label { font-size: 4.5px; opacity: 0.8; }
+.title { font-size: 6.5px; text-anchor: middle; }
 `;
 
 function formatFrequency(frequency: number): string {

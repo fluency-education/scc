@@ -7,10 +7,15 @@ const html = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <title>Standard Celeration Chart</title>
-<style>body { margin: 2rem; background: #fff; }</style>
+<style>
+body { margin: 2rem; background: #fff; }
+main { max-width: 1100px; }
+</style>
 </head>
 <body>
+<main>
 ${renderChart()}
+</main>
 </body>
 </html>
 `;
