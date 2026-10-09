@@ -30,4 +30,10 @@ describe("renderChart", () => {
       expect(svg).toContain(`>${label}</text>`);
     }
   });
+
+  it("labels the 5 line within each decade from .005 to 500", () => {
+    for (const label of [".005", ".05", ".5", "5", "50", "500"]) {
+      expect(svg).toContain(`>${label}</text>`);
+    }
+  });
 });

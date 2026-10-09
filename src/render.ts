@@ -46,6 +46,8 @@ export function renderChart({ width = 900 }: ChartOptions = {}): string {
     for (let n = 2; n <= 9; n++) {
       parts.push(line(0, y(n * decade), width, y(n * decade), n === 5 ? "half" : "unit"));
     }
+    const half = 5 * decade;
+    parts.push(text(-10, y(half) + 4, formatFrequency(half), "y-label half-label"));
   }
 
   parts.push(text(width / 2, height + 45, "Successive calendar days", "title"));
@@ -73,6 +75,7 @@ line { stroke: #4a9fd8; shape-rendering: crispEdges; }
 text { font-family: system-ui, sans-serif; fill: #1f5f8b; }
 .x-label { font-size: 11px; text-anchor: middle; }
 .y-label { font-size: 11px; text-anchor: end; }
+.half-label { font-size: 9px; opacity: 0.8; }
 .title { font-size: 13px; text-anchor: middle; }
 `;
 
