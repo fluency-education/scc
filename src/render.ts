@@ -5,6 +5,18 @@ const CELERATION_ANGLE = 34;
 /** Powers of ten from MIN_FREQUENCY (10^-3) up to MAX_FREQUENCY (10^3). */
 const LOWEST_POWER = -3;
 const HIGHEST_POWER = 3;
+/*
+ * Zero has no place on a log scale, so it gets its own row below .001. These
+ * distances are fractions of one ×10 cycle, measured from a printed chart.
+ */
+/** From the .001 line down to the zero line. */
+const ZERO_GAP = 0.375;
+/** How far below .001 the week lines run before the gap. */
+const WEEK_TAIL = 0.275;
+/** Height of the tick each day gets rising from the zero line. */
+const NUB = 0.0625;
+/** The thin grid carries on below .001 at these frequencies. */
+const BELOW_FLOOR = [0.0009, 0.0008, 0.0007];
 
 /**
  * Width of one day in SVG units. The chart scales to fill its container, so
@@ -31,6 +43,11 @@ export function renderChart(): string {
   const height = chartHeight(width);
   const x = dayScale({ left: 0, right: width });
   const y = frequencyScale({ top: 0, bottom: height });
+  const cycle = height / (HIGHEST_POWER - LOWEST_POWER);
+  const zeroY = height + cycle * ZERO_GAP;
+  const floorY = y(Math.min(...BELOW_FLOOR));
+  const weekTailY = height + cycle * WEEK_TAIL;
+  const nubY = zeroY - cycle * NUB;
   // Each layer is drawn over the one before, so thick lines are never
   // broken up by the thin lines that cross them.
   const thinRows: string[] = [];
@@ -51,25 +68,32 @@ export function renderChart(): string {
     const half = 5 * decade;
     parts.push(text(-4, y(half) + 1.5, formatFrequency(half), "y-label half-label"));
   }
+  for (const frequency of BELOW_FLOOR) {
+    thinRows.push(line(0, y(frequency), width, y(frequency), "unit"));
+  }
+  thickRows.push(line(0, zeroY, width, zeroY, "zero"));
+  parts.push(text(-4, zeroY + 2, "0", "y-label"));
 
   for (let day = 0; day <= DAYS; day++) {
     if (day % 7 === 0) {
-      thickColumns.push(line(x(day), 0, x(day), height, "week"));
+      thickColumns.push(line(x(day), 0, x(day), weekTailY, "week"));
+      thickColumns.push(line(x(day), nubY, x(day), zeroY, "week nub"));
     } else {
-      thinColumns.push(line(x(day), 0, x(day), height, "day"));
+      thinColumns.push(line(x(day), 0, x(day), floorY, "day"));
+      thinColumns.push(line(x(day), nubY, x(day), zeroY, "day nub"));
     }
   }
   for (let day = 0; day <= DAYS; day += 14) {
-    parts.push(text(x(day), height + 9, String(day), "x-label"));
+    parts.push(text(x(day), zeroY + 9, String(day), "x-label"));
   }
 
-  parts.push(text(width / 2, height + 21, "Successive calendar days", "title"));
+  parts.push(text(width / 2, zeroY + 21, "Successive calendar days", "title"));
   parts.push(
     `<text class="title" transform="translate(-28 ${round(height / 2)}) rotate(-90)">Count per minute</text>`,
   );
 
   const totalWidth = width + MARGIN.left + MARGIN.right;
-  const totalHeight = height + MARGIN.top + MARGIN.bottom;
+  const totalHeight = zeroY + MARGIN.top + MARGIN.bottom;
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${round(totalWidth)} ${round(totalHeight)}" style="display: block; width: 100%; height: auto">`,
     `<style>${STYLE}</style>`,
@@ -89,7 +113,7 @@ const STYLE = `
 line { stroke: #4a9fd8; stroke-width: 1; vector-effect: non-scaling-stroke; }
 .day, .unit { stroke: #c4e0f4; }
 .half { stroke: #8cc4e9; }
-.week, .decade { stroke-width: 2; }
+.week, .decade, .zero { stroke-width: 2; }
 text { font-family: system-ui, sans-serif; fill: #1f5f8b; }
 .x-label { font-size: 5.5px; text-anchor: middle; }
 .y-label { font-size: 5.5px; text-anchor: end; }

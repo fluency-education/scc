@@ -28,9 +28,9 @@ describe("renderChart", () => {
   });
 
   it("draws thin lines first, then thick horizontal lines, then thick vertical lines", () => {
-    const order = [...svg.matchAll(/<line class="(\w+)"/g)].map((match) => match[1]);
+    const order = [...svg.matchAll(/<line class="(\w+)/g)].map((match) => match[1]);
     const layer = (cls: string | undefined) =>
-      ({ unit: 0, day: 1, decade: 2, half: 2, week: 3 })[cls ?? ""];
+      ({ unit: 0, day: 1, decade: 2, half: 2, zero: 2, week: 3 })[cls ?? ""];
     const layers = order.map(layer);
     expect(layers).toEqual([...layers].sort());
     expect(new Set(layers)).toEqual(new Set([0, 1, 2, 3]));
@@ -52,6 +52,46 @@ describe("renderChart", () => {
     for (const label of [".001", ".01", ".1", "1", "10", "100", "1000"]) {
       expect(svg).toContain(`>${label}</text>`);
     }
+  });
+
+  describe("zero row", () => {
+    const rowYs = (cls: string) =>
+      [...svg.matchAll(new RegExp(`class="${cls}" x1="0" y1="([\\d.]+)"`, "g"))].map((match) => Number(match[1]));
+    const columns = (cls: string) =>
+      [...svg.matchAll(new RegExp(`class="${cls}" x1="[\\d.]+" y1="([\\d.]+)" x2="[\\d.]+" y2="([\\d.]+)"`, "g"))].map(
+        (match) => ({ top: Number(match[1]), bottom: Number(match[2]) }),
+      );
+    const lowestDecade = Math.max(...rowYs("decade"));
+    const zero = rowYs("zero")[0] ?? NaN;
+
+    it("draws a zero line labelled 0 below .001", () => {
+      expect(zero).toBeGreaterThan(lowestDecade);
+      expect(svg).toContain(">0</text>");
+    });
+
+    it("stops the day lines a little below .001, leaving a gap above zero", () => {
+      for (const { bottom } of columns("day")) {
+        expect(bottom).toBeGreaterThan(lowestDecade);
+        expect(bottom).toBeLessThan(zero);
+      }
+    });
+
+    it("runs the week lines further down than the day lines", () => {
+      const dayBottom = Math.max(...columns("day").map((column) => column.bottom));
+      for (const { bottom } of columns("week")) {
+        expect(bottom).toBeGreaterThan(dayBottom);
+        expect(bottom).toBeLessThan(zero);
+      }
+    });
+
+    it("gives every day a nub rising from the zero line", () => {
+      const nubs = [...columns("day nub"), ...columns("week nub")];
+      expect(nubs).toHaveLength(DAYS + 1);
+      for (const { top, bottom } of nubs) {
+        expect(bottom).toBe(zero);
+        expect(top).toBeGreaterThan(Math.max(...columns("week").map((column) => column.bottom)));
+      }
+    });
   });
 
   it("labels the 5 line within each decade from .005 to 500", () => {
