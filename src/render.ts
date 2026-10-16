@@ -1,4 +1,4 @@
-import { DAYS, dayScale, frequencyScale } from "./scale.js";
+import { DAYS, MAX_FREQUENCY, MIN_FREQUENCY, dayScale, frequencyScale } from "./scale.js";
 
 /** Angle at which a ×2 per week celeration line rises on a standard chart. */
 const CELERATION_ANGLE = 34;
@@ -34,11 +34,28 @@ export function chartHeight(width: number): number {
   return (doublingHeight / Math.log10(2)) * cycles;
 }
 
+/** Radius of a plotted correct dot, in SVG units. */
+const DOT_RADIUS = 1.1;
+/** Half the width of a plotted error X, in SVG units. */
+const CROSS_SIZE = 1.1;
+
+export interface ChartOptions {
+  /**
+   * Correct frequencies (count per minute), one per consecutive day starting at
+   * day 0. A negative number marks a day with no timing recorded. Zero is drawn
+   * on the zero line; frequencies outside .001–1000 and days past the last day
+   * of the chart are not drawn.
+   */
+  corrects?: readonly number[];
+  /** Error frequencies, drawn as an X. Same format as `corrects`. */
+  errors?: readonly number[];
+}
+
 /**
- * Renders an empty daily per-minute Standard Celeration Chart as an SVG string.
+ * Renders a daily per-minute Standard Celeration Chart as an SVG string.
  * The SVG fills the width of its container and keeps its proportions.
  */
-export function renderChart(): string {
+export function renderChart({ corrects = [], errors = [] }: ChartOptions = {}): string {
   const width = DAYS * DAY_WIDTH;
   const height = chartHeight(width);
   const x = dayScale({ left: 0, right: width });
@@ -92,6 +109,12 @@ export function renderChart(): string {
     `<text class="title" transform="translate(-28 ${round(height / 2)}) rotate(-90)">Count per minute</text>`,
   );
 
+  /** One mark per plottable day, skipping unrecorded and off-chart values. */
+  const marks = (frequencies: readonly number[], mark: (cx: number, cy: number) => string) =>
+    frequencies.flatMap((frequency, day) =>
+      day <= DAYS && isPlottable(frequency) ? [mark(x(day), frequency === 0 ? zeroY : y(frequency))] : [],
+    );
+
   const totalWidth = width + MARGIN.left + MARGIN.right;
   const totalHeight = zeroY + MARGIN.top + MARGIN.bottom;
   return [
@@ -102,6 +125,8 @@ export function renderChart(): string {
     ...thinColumns,
     ...thickRows,
     ...thickColumns,
+    ...marks(corrects, dot),
+    ...marks(errors, cross),
     ...parts,
     `</g>`,
     `</svg>`,
@@ -114,6 +139,8 @@ line { stroke: #4a9fd8; stroke-width: 1; vector-effect: non-scaling-stroke; }
 .day, .unit { stroke: #c4e0f4; }
 .half { stroke: #8cc4e9; }
 .week, .decade, .zero { stroke-width: 2; }
+.correct { fill: #111; }
+.error { stroke: #d62828; stroke-width: 1.25; fill: none; vector-effect: non-scaling-stroke; }
 text { font-family: system-ui, sans-serif; fill: #1f5f8b; }
 .x-label { font-size: 5.5px; text-anchor: middle; }
 .y-label { font-size: 5.5px; text-anchor: end; }
@@ -123,6 +150,20 @@ text { font-family: system-ui, sans-serif; fill: #1f5f8b; }
 
 function formatFrequency(frequency: number): string {
   return frequency < 1 ? String(frequency).replace(/^0/, "") : String(frequency);
+}
+
+
+function isPlottable(frequency: number): boolean {
+  return frequency === 0 || (frequency >= MIN_FREQUENCY && frequency <= MAX_FREQUENCY);
+}
+
+function dot(cx: number, cy: number): string {
+  return `<circle class="correct" cx="${round(cx)}" cy="${round(cy)}" r="${DOT_RADIUS}"/>`;
+}
+
+function cross(cx: number, cy: number): string {
+  const [left, right, top, bottom] = [cx - CROSS_SIZE, cx + CROSS_SIZE, cy - CROSS_SIZE, cy + CROSS_SIZE].map(round);
+  return `<path class="error" d="M${left} ${top}L${right} ${bottom}M${left} ${bottom}L${right} ${top}"/>`;
 }
 
 function line(x1: number, y1: number, x2: number, y2: number, cls: string): string {
