@@ -179,3 +179,47 @@ describe("renderChart errors", () => {
     expect(svg.indexOf('<path class="error"')).toBeGreaterThan(svg.lastIndexOf("<line"));
   });
 });
+
+describe("renderChart record floors", () => {
+  const dashesIn = (svg: string) =>
+    [...svg.matchAll(/<path class="floor" d="M(-?[\d.]+) (-?[\d.]+)H(-?[\d.]+)"/g)].map((match) => ({
+      cx: (Number(match[1]) + Number(match[3])) / 2,
+      cy: Number(match[2]),
+    }));
+  const labelY = (svg: string, label: string) => Number(svg.match(new RegExp(`y="([\\d.]+)">${label}</text>`))?.[1]);
+
+  it("draws no dashes without data", () => {
+    expect(dashesIn(renderChart())).toEqual([]);
+  });
+
+  it("draws a dash for each day at one count per timing", () => {
+    const svg = renderChart({ timingSeconds: [60, 600] });
+    const [first, second] = dashesIn(svg);
+    expect(first?.cx).toBeCloseTo(0);
+    expect(second?.cx).toBeCloseTo(DAY_WIDTH);
+    expect(first?.cy).toBeCloseTo(labelY(svg, "1") - 2);
+    expect(second?.cy).toBeCloseTo(labelY(svg, ".1") - 2);
+  });
+
+  it("converts seconds to a per-minute floor", () => {
+    const svg = renderChart({ timingSeconds: [30, 120] });
+    const [first, second] = dashesIn(svg);
+    // 30 seconds floors at 2 per minute, log10(2) of a cycle above the 1 line.
+    expect(first?.cy).toBeCloseTo(labelY(svg, "1") - 2 - (labelY(svg, "1") - labelY(svg, "10")) * Math.log10(2));
+    expect(second?.cy).toBeCloseTo(labelY(svg, ".5") - 1.5);
+  });
+
+  it("skips negative and zero timings and floors off the chart", () => {
+    // 2000 minutes floors below .001; .03 seconds floors above 1000.
+    const svg = renderChart({ timingSeconds: [-1, 0, 2000 * 60, 0.03, 60] });
+    expect(dashesIn(svg)).toEqual([{ cx: 4 * DAY_WIDTH, cy: dashesIn(renderChart({ timingSeconds: [60] }))[0]?.cy }]);
+  });
+
+  it("draws the dashes over the grid and under the dots and crosses", () => {
+    const svg = renderChart({ corrects: [1], errors: [1], timingSeconds: [60] });
+    const floor = svg.indexOf('<path class="floor"');
+    expect(floor).toBeGreaterThan(svg.lastIndexOf("<line"));
+    expect(floor).toBeLessThan(svg.indexOf("<circle"));
+    expect(floor).toBeLessThan(svg.indexOf('<path class="error"'));
+  });
+});

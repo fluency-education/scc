@@ -14,6 +14,9 @@ const errors = corrects.map((correct, day) =>
   correct < 0 ? -1 : day === 3 ? 4 : Math.max(0, Math.round(6 * 0.8 ** (day / 7) - ((day * 13) % 3))),
 );
 
+// Sample timings: 1 minute, then 2 minutes from day 28.
+const timingSeconds = corrects.map((correct, day) => (correct < 0 ? -1 : day < 28 ? 60 : 120));
+
 const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -26,7 +29,7 @@ main { max-width: 1100px; }
 </head>
 <body>
 <main>
-${renderChart({ corrects, errors })}
+${renderChart({ corrects, errors, timingSeconds })}
 </main>
 </body>
 </html>
