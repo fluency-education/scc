@@ -107,7 +107,6 @@ describe("renderChart corrects", () => {
       cx: Number(match[1]),
       cy: Number(match[2]),
     }));
-  const rowY = (svg: string, cls: string) => Number(svg.match(new RegExp(`class="${cls}" x1="0" y1="([\\d.]+)"`))?.[1]);
   const labelY = (svg: string, label: string) => Number(svg.match(new RegExp(`y="([\\d.]+)">${label}</text>`))?.[1]);
 
   it("draws no dots without data", () => {
@@ -129,9 +128,20 @@ describe("renderChart corrects", () => {
     expect(dotsIn(svg).map((dot) => dot.cx)).toEqual([0, 2 * DAY_WIDTH]);
   });
 
-  it("draws zero on the zero line", () => {
-    const svg = renderChart({ corrects: [0], timingSeconds: [60] });
-    expect(dotsIn(svg)[0]?.cy).toBe(rowY(svg, "zero"));
+  it("draws zero just under the record floor", () => {
+    const svg = renderChart({ corrects: [0, 0], timingSeconds: [60, 600] });
+    const [first, second] = dotsIn(svg);
+    expect(first?.cx).toBe(0);
+    expect(first?.cy).toBeGreaterThan(labelY(svg, "1") - 2);
+    expect(first?.cy).toBeLessThan(labelY(svg, "1") - 2 + 2.5);
+    expect(second?.cx).toBe(DAY_WIDTH);
+    expect(second?.cy).toBeGreaterThan(labelY(svg, ".1") - 2);
+    expect(second?.cy).toBeLessThan(labelY(svg, ".1") - 2 + 2.5);
+  });
+
+  it("skips zero when its record floor is off the chart", () => {
+    const svg = renderChart({ corrects: [0], timingSeconds: [2000 * 60] });
+    expect(dotsIn(svg)).toEqual([]);
   });
 
   it("divides each count by its day's timing", () => {
@@ -165,7 +175,6 @@ describe("renderChart errors", () => {
       cx: (Number(match[1]) + Number(match[3])) / 2,
       cy: (Number(match[2]) + Number(match[4])) / 2,
     }));
-  const rowY = (svg: string, cls: string) => Number(svg.match(new RegExp(`class="${cls}" x1="0" y1="([\\d.]+)"`))?.[1]);
   const labelY = (svg: string, label: string) => Number(svg.match(new RegExp(`y="([\\d.]+)">${label}</text>`))?.[1]);
 
   it("draws an X for each day at its frequency", () => {
@@ -177,9 +186,32 @@ describe("renderChart errors", () => {
     expect(second?.cy).toBeCloseTo(labelY(svg, "10") - 2);
   });
 
-  it("skips negative days, draws zero on the zero line and skips off-chart values", () => {
+  it("skips negative days, draws zero under the record floor and skips off-chart values", () => {
     const svg = renderChart({ errors: [0, -1, 1, 1001], timingSeconds: [60, 60, 2000 * 60, 60] });
-    expect(crossesIn(svg)).toEqual([{ cx: 0, cy: rowY(svg, "zero") }]);
+    const crosses = crossesIn(svg);
+    expect(crosses).toHaveLength(1);
+    expect(crosses[0]?.cx).toBeCloseTo(0);
+    expect(crosses[0]?.cy).toBeGreaterThan(labelY(svg, "1") - 2);
+    expect(crosses[0]?.cy).toBeLessThan(labelY(svg, "1") - 2 + 2.5);
+  });
+
+  it("draws a zero correct and a zero error side by side under the record floor", () => {
+    const svg = renderChart({ corrects: [0], errors: [0], timingSeconds: [60] });
+    const dot = svg.match(/<circle class="correct" cx="(-?[\d.]+)" cy="([\d.]+)" r="([\d.]+)"/);
+    const [cross] = crossesIn(svg);
+    const [dotX, dotY, radius] = [Number(dot?.[1]), Number(dot?.[2]), Number(dot?.[3])];
+    expect(dotY).toBeCloseTo(cross?.cy ?? NaN);
+    expect(dotX).toBeLessThan(0);
+    expect(cross?.cx).toBeGreaterThan(0);
+    // The X's left edge is the cross half-width left of its centre.
+    expect(dotX + radius).toBeLessThanOrEqual((cross?.cx ?? NaN) - radius);
+    expect(dotY).toBeGreaterThan(labelY(svg, "1") - 2);
+  });
+
+  it("keeps a zero centred on its day when the other count is not zero", () => {
+    const svg = renderChart({ corrects: [5, 0], errors: [0, 2], timingSeconds: [60, 60] });
+    expect(crossesIn(svg)[0]?.cx).toBeCloseTo(0);
+    expect(svg).toContain(`<circle class="correct" cx="${DAY_WIDTH}"`);
   });
 
   it("draws errors alongside corrects without changing them", () => {

@@ -11,7 +11,7 @@ const minutes = (day) => timingSeconds[day] / 60;
 // Sample correct counts, building fluency over a few weeks.
 const corrects = timingSeconds.map((seconds, day) => {
   if (seconds < 0) return -1;
-  if (day === 3) return 0;
+  if (day === 3 || day === 10) return 0;
   return Math.round(8 * 1.15 ** (day / 7) * (0.85 + ((day * 37) % 10) / 30) * minutes(day));
 });
 
@@ -21,7 +21,9 @@ const errors = timingSeconds.map((seconds, day) =>
     ? -1
     : day === 3
       ? 4
-      : Math.max(0, Math.round((6 * 0.8 ** (day / 7) - ((day * 13) % 3)) * minutes(day))),
+      : day === 10
+        ? 0
+        : Math.max(0, Math.round((6 * 0.8 ** (day / 7) - ((day * 13) % 3)) * minutes(day))),
 );
 
 const html = `<!doctype html>

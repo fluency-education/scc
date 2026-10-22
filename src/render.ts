@@ -40,14 +40,22 @@ const DOT_RADIUS = 1.1;
 const CROSS_SIZE = 1.1;
 /** Half the width of a record floor dash, in SVG units. */
 const FLOOR_SIZE = 1.1;
+/** How far below its record floor a zero count is drawn, in SVG units. */
+const ZERO_DROP = 1.75;
+/**
+ * How far a zero correct and a zero error on the same day are moved apart,
+ * each to its own side of the day line, in SVG units.
+ */
+const ZERO_SPREAD = 1.25;
 
 export interface ChartOptions {
   /**
    * Correct counts, one per consecutive day starting at day 0, each divided by
    * that day's timing to plot it per minute. A negative count, or a day without
-   * a timing, marks a day with nothing recorded. A count of zero is drawn on the
-   * zero line; frequencies outside .001–1000 and days past the last day of the
-   * chart are not drawn.
+   * a timing, marks a day with nothing recorded. A count of zero is drawn just
+   * under the day's record floor, beside a zero error if there is one.
+   * Frequencies or record floors outside .001–1000 and days past the last day
+   * of the chart are not drawn.
    */
   corrects?: readonly number[];
   /** Error counts, drawn as an X. Same format as `corrects`. */
@@ -119,11 +127,26 @@ export function renderChart({ corrects = [], errors = [], timingSeconds = [] }: 
     `<text class="title" transform="translate(-28 ${round(height / 2)}) rotate(-90)">Count per minute</text>`,
   );
 
-  /** One mark per plottable day, skipping unrecorded and off-chart values. */
-  const marks = (frequencies: readonly number[], mark: (cx: number, cy: number) => string) =>
-    frequencies.flatMap((frequency, day) =>
-      day <= DAYS && isPlottable(frequency) ? [mark(x(day), frequency === 0 ? zeroY : y(frequency))] : [],
-    );
+  const floors = perMinute(timingSeconds.map(() => 1), timingSeconds);
+  const correctFrequencies = perMinute(corrects, timingSeconds);
+  const errorFrequencies = perMinute(errors, timingSeconds);
+
+  /**
+   * One mark per plottable day, skipping unrecorded and off-chart values. A
+   * zero goes just under the day's record floor; when corrects and errors are
+   * both zero, each moves toward `side` (-1 left, 1 right) to sit side by side.
+   */
+  const marks = (frequencies: readonly number[], mark: (cx: number, cy: number) => string, side = 0) =>
+    frequencies.flatMap((frequency, day) => {
+      if (day > DAYS) return [];
+      if (frequency === 0) {
+        const floor = floors[day] ?? -1;
+        if (!isPlottable(floor)) return [];
+        const bothZero = correctFrequencies[day] === 0 && errorFrequencies[day] === 0;
+        return [mark(x(day) + (bothZero ? side * ZERO_SPREAD : 0), y(floor) + ZERO_DROP)];
+      }
+      return isPlottable(frequency) ? [mark(x(day), y(frequency))] : [];
+    });
 
   const totalWidth = width + MARGIN.left + MARGIN.right;
   const totalHeight = zeroY + MARGIN.top + MARGIN.bottom;
@@ -135,9 +158,9 @@ export function renderChart({ corrects = [], errors = [], timingSeconds = [] }: 
     ...thinColumns,
     ...thickRows,
     ...thickColumns,
-    ...marks(perMinute(timingSeconds.map(() => 1), timingSeconds), dash),
-    ...marks(perMinute(corrects, timingSeconds), dot),
-    ...marks(perMinute(errors, timingSeconds), cross),
+    ...marks(floors, dash),
+    ...marks(correctFrequencies, dot, -1),
+    ...marks(errorFrequencies, cross, 1),
     ...parts,
     `</g>`,
     `</svg>`,
@@ -177,7 +200,7 @@ function perMinute(counts: readonly number[], timingSeconds: readonly number[]):
 }
 
 function isPlottable(frequency: number): boolean {
-  return frequency === 0 || (frequency >= MIN_FREQUENCY && frequency <= MAX_FREQUENCY);
+  return frequency >= MIN_FREQUENCY && frequency <= MAX_FREQUENCY;
 }
 
 function dot(cx: number, cy: number): string {
