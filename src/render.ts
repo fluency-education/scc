@@ -43,13 +43,14 @@ const FLOOR_SIZE = 1.1;
 
 export interface ChartOptions {
   /**
-   * Correct frequencies (count per minute), one per consecutive day starting at
-   * day 0. A negative number marks a day with no timing recorded. Zero is drawn
-   * on the zero line; frequencies outside .001–1000 and days past the last day
-   * of the chart are not drawn.
+   * Correct counts, one per consecutive day starting at day 0, each divided by
+   * that day's timing to plot it per minute. A negative count, or a day without
+   * a timing, marks a day with nothing recorded. A count of zero is drawn on the
+   * zero line; frequencies outside .001–1000 and days past the last day of the
+   * chart are not drawn.
    */
   corrects?: readonly number[];
-  /** Error frequencies, drawn as an X. Same format as `corrects`. */
+  /** Error counts, drawn as an X. Same format as `corrects`. */
   errors?: readonly number[];
   /**
    * Length of each day's timing in seconds, one per consecutive day starting at
@@ -134,9 +135,9 @@ export function renderChart({ corrects = [], errors = [], timingSeconds = [] }: 
     ...thinColumns,
     ...thickRows,
     ...thickColumns,
-    ...marks(timingSeconds.map(recordFloor), dash),
-    ...marks(corrects, dot),
-    ...marks(errors, cross),
+    ...marks(perMinute(timingSeconds.map(() => 1), timingSeconds), dash),
+    ...marks(perMinute(corrects, timingSeconds), dot),
+    ...marks(perMinute(errors, timingSeconds), cross),
     ...parts,
     `</g>`,
     `</svg>`,
@@ -164,9 +165,15 @@ function formatFrequency(frequency: number): string {
 }
 
 
-/** Frequency of one count in a timing, or -1 (unrecorded) without a timing. */
-function recordFloor(seconds: number): number {
-  return seconds > 0 ? toFrequency(1, seconds / 60) : -1;
+/**
+ * Each day's count per minute of its timing, or -1 (unrecorded) for a day
+ * without a count or a timing.
+ */
+function perMinute(counts: readonly number[], timingSeconds: readonly number[]): number[] {
+  return counts.map((count, day) => {
+    const seconds = timingSeconds[day] ?? -1;
+    return count >= 0 && seconds > 0 ? toFrequency(count, seconds / 60) : -1;
+  });
 }
 
 function isPlottable(frequency: number): boolean {

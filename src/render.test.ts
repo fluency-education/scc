@@ -115,7 +115,7 @@ describe("renderChart corrects", () => {
   });
 
   it("draws a dot for each day at its frequency", () => {
-    const svg = renderChart({ corrects: [1, 10] });
+    const svg = renderChart({ corrects: [1, 10], timingSeconds: [60, 60] });
     const [first, second] = dotsIn(svg);
     expect(first?.cx).toBe(0);
     expect(second?.cx).toBe(DAY_WIDTH);
@@ -125,22 +125,36 @@ describe("renderChart corrects", () => {
   });
 
   it("skips days with a negative value", () => {
-    const svg = renderChart({ corrects: [5, -1, 5] });
+    const svg = renderChart({ corrects: [5, -1, 5], timingSeconds: [60, 60, 60] });
     expect(dotsIn(svg).map((dot) => dot.cx)).toEqual([0, 2 * DAY_WIDTH]);
   });
 
   it("draws zero on the zero line", () => {
-    const svg = renderChart({ corrects: [0] });
+    const svg = renderChart({ corrects: [0], timingSeconds: [60] });
     expect(dotsIn(svg)[0]?.cy).toBe(rowY(svg, "zero"));
   });
 
+  it("divides each count by its day's timing", () => {
+    const svg = renderChart({ corrects: [5, 100], timingSeconds: [30, 600] });
+    const [first, second] = dotsIn(svg);
+    expect(first?.cy).toBeCloseTo(labelY(svg, "10") - 2);
+    expect(second?.cy).toBeCloseTo(labelY(svg, "10") - 2);
+  });
+
+  it("skips days without a timing", () => {
+    const svg = renderChart({ corrects: [5, 5, 5], timingSeconds: [0, -1] });
+    expect(dotsIn(svg)).toEqual([]);
+  });
+
   it("skips frequencies off the chart and days past the last day", () => {
-    const corrects = [0.0005, 1001, ...Array<number>(DAYS - 1).fill(-1), 5];
-    expect(dotsIn(renderChart({ corrects }))).toEqual([]);
+    // 1 in 2000 minutes is below .001; 1001 in a minute is above 1000.
+    const corrects = [1, 1001, ...Array<number>(DAYS - 1).fill(-1), 5];
+    const timingSeconds = [2000 * 60, ...Array<number>(DAYS + 1).fill(60)];
+    expect(dotsIn(renderChart({ corrects, timingSeconds }))).toEqual([]);
   });
 
   it("draws the dots over the grid", () => {
-    const svg = renderChart({ corrects: [1] });
+    const svg = renderChart({ corrects: [1], timingSeconds: [60] });
     expect(svg.indexOf("<circle")).toBeGreaterThan(svg.lastIndexOf("<line"));
   });
 });
@@ -155,7 +169,7 @@ describe("renderChart errors", () => {
   const labelY = (svg: string, label: string) => Number(svg.match(new RegExp(`y="([\\d.]+)">${label}</text>`))?.[1]);
 
   it("draws an X for each day at its frequency", () => {
-    const svg = renderChart({ errors: [1, 10] });
+    const svg = renderChart({ errors: [1, 10], timingSeconds: [60, 60] });
     const [first, second] = crossesIn(svg);
     expect(first?.cx).toBeCloseTo(0);
     expect(second?.cx).toBeCloseTo(DAY_WIDTH);
@@ -164,18 +178,18 @@ describe("renderChart errors", () => {
   });
 
   it("skips negative days, draws zero on the zero line and skips off-chart values", () => {
-    const svg = renderChart({ errors: [0, -1, 0.0005, 1001] });
+    const svg = renderChart({ errors: [0, -1, 1, 1001], timingSeconds: [60, 60, 2000 * 60, 60] });
     expect(crossesIn(svg)).toEqual([{ cx: 0, cy: rowY(svg, "zero") }]);
   });
 
   it("draws errors alongside corrects without changing them", () => {
-    const svg = renderChart({ corrects: [20], errors: [2] });
+    const svg = renderChart({ corrects: [20], errors: [2], timingSeconds: [60] });
     expect(svg.match(/<circle class="correct"/g)).toHaveLength(1);
     expect(crossesIn(svg)).toHaveLength(1);
   });
 
   it("draws the crosses over the grid", () => {
-    const svg = renderChart({ errors: [1] });
+    const svg = renderChart({ errors: [1], timingSeconds: [60] });
     expect(svg.indexOf('<path class="error"')).toBeGreaterThan(svg.lastIndexOf("<line"));
   });
 });
