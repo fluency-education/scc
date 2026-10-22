@@ -1,4 +1,4 @@
-import { DAYS, MAX_FREQUENCY, MIN_FREQUENCY, dayScale, frequencyScale } from "./scale.js";
+import { DAYS, MAX_FREQUENCY, MIN_FREQUENCY, dayScale, frequencyScale, toFrequency } from "./scale.js";
 
 /** Angle at which a ×2 per week celeration line rises on a standard chart. */
 const CELERATION_ANGLE = 34;
@@ -38,6 +38,8 @@ export function chartHeight(width: number): number {
 const DOT_RADIUS = 1.1;
 /** Half the width of a plotted error X, in SVG units. */
 const CROSS_SIZE = 1.1;
+/** Half the width of a record floor dash, in SVG units. */
+const FLOOR_SIZE = 1.1;
 
 export interface ChartOptions {
   /**
@@ -49,13 +51,20 @@ export interface ChartOptions {
   corrects?: readonly number[];
   /** Error frequencies, drawn as an X. Same format as `corrects`. */
   errors?: readonly number[];
+  /**
+   * Length of each day's timing in seconds, one per consecutive day starting at
+   * day 0. Each is drawn as a dash at its record floor, the lowest frequency
+   * the timing could record: one count in the timing (1 per minute for 60
+   * seconds, .1 for 600). Zero or a negative number marks a day with no timing.
+   */
+  timingSeconds?: readonly number[];
 }
 
 /**
  * Renders a daily per-minute Standard Celeration Chart as an SVG string.
  * The SVG fills the width of its container and keeps its proportions.
  */
-export function renderChart({ corrects = [], errors = [] }: ChartOptions = {}): string {
+export function renderChart({ corrects = [], errors = [], timingSeconds = [] }: ChartOptions = {}): string {
   const width = DAYS * DAY_WIDTH;
   const height = chartHeight(width);
   const x = dayScale({ left: 0, right: width });
@@ -125,6 +134,7 @@ export function renderChart({ corrects = [], errors = [] }: ChartOptions = {}): 
     ...thinColumns,
     ...thickRows,
     ...thickColumns,
+    ...marks(timingSeconds.map(recordFloor), dash),
     ...marks(corrects, dot),
     ...marks(errors, cross),
     ...parts,
@@ -140,6 +150,7 @@ line { stroke: #4a9fd8; stroke-width: 1; vector-effect: non-scaling-stroke; }
 .half { stroke: #8cc4e9; }
 .week, .decade, .zero { stroke-width: 2; }
 .correct { fill: #111; }
+.floor { stroke: #111; stroke-width: 1.25; vector-effect: non-scaling-stroke; }
 .error { stroke: #d62828; stroke-width: 1.25; fill: none; vector-effect: non-scaling-stroke; }
 text { font-family: system-ui, sans-serif; fill: #1f5f8b; }
 .x-label { font-size: 5.5px; text-anchor: middle; }
@@ -153,6 +164,11 @@ function formatFrequency(frequency: number): string {
 }
 
 
+/** Frequency of one count in a timing, or -1 (unrecorded) without a timing. */
+function recordFloor(seconds: number): number {
+  return seconds > 0 ? toFrequency(1, seconds / 60) : -1;
+}
+
 function isPlottable(frequency: number): boolean {
   return frequency === 0 || (frequency >= MIN_FREQUENCY && frequency <= MAX_FREQUENCY);
 }
@@ -164,6 +180,11 @@ function dot(cx: number, cy: number): string {
 function cross(cx: number, cy: number): string {
   const [left, right, top, bottom] = [cx - CROSS_SIZE, cx + CROSS_SIZE, cy - CROSS_SIZE, cy + CROSS_SIZE].map(round);
   return `<path class="error" d="M${left} ${top}L${right} ${bottom}M${left} ${bottom}L${right} ${top}"/>`;
+}
+
+function dash(cx: number, cy: number): string {
+  const [left, right, y] = [cx - FLOOR_SIZE, cx + FLOOR_SIZE, cy].map(round);
+  return `<path class="floor" d="M${left} ${y}H${right}"/>`;
 }
 
 function line(x1: number, y1: number, x2: number, y2: number, cls: string): string {
