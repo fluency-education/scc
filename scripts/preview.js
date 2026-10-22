@@ -2,20 +2,27 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { renderChart } from "../dist/index.js";
 
-// Sample corrects: weekdays only, building fluency over a few weeks.
-const corrects = Array.from({ length: 60 }, (_, day) => {
-  if (day % 7 === 0 || day % 7 === 6) return -1;
+// Sample timings on weekdays only: 1 minute, then 2 minutes from day 28.
+const timingSeconds = Array.from({ length: 60 }, (_, day) =>
+  day % 7 === 0 || day % 7 === 6 ? -1 : day < 28 ? 60 : 120,
+);
+const minutes = (day) => timingSeconds[day] / 60;
+
+// Sample correct counts, building fluency over a few weeks.
+const corrects = timingSeconds.map((seconds, day) => {
+  if (seconds < 0) return -1;
   if (day === 3) return 0;
-  return Math.round(8 * 1.15 ** (day / 7) * (0.85 + ((day * 37) % 10) / 30));
+  return Math.round(8 * 1.15 ** (day / 7) * (0.85 + ((day * 37) % 10) / 30) * minutes(day));
 });
 
-// Sample errors on the same days, falling as corrects rise.
-const errors = corrects.map((correct, day) =>
-  correct < 0 ? -1 : day === 3 ? 4 : Math.max(0, Math.round(6 * 0.8 ** (day / 7) - ((day * 13) % 3))),
+// Sample error counts on the same days, falling as corrects rise.
+const errors = timingSeconds.map((seconds, day) =>
+  seconds < 0
+    ? -1
+    : day === 3
+      ? 4
+      : Math.max(0, Math.round((6 * 0.8 ** (day / 7) - ((day * 13) % 3)) * minutes(day))),
 );
-
-// Sample timings: 1 minute, then 2 minutes from day 28.
-const timingSeconds = corrects.map((correct, day) => (correct < 0 ? -1 : day < 28 ? 60 : 120));
 
 const html = `<!doctype html>
 <html lang="en">
