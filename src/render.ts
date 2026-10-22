@@ -47,6 +47,35 @@ const ZERO_DROP = 1.75;
  * each to its own side of the day line, in SVG units.
  */
 const ZERO_SPREAD = 1.25;
+/** Outer and inner radius of an aim star, in SVG units. */
+const STAR_RADIUS = 3;
+const STAR_INNER_RADIUS = 1.3;
+/** Font size of a phase name, in SVG units. */
+const PHASE_FONT_SIZE = 5;
+/** Rough width of one character of a phase name, as a fraction of its font size. */
+const PHASE_CHAR_WIDTH = 0.6;
+/** How far a plotted mark reaches from its centre, as far as phase names are concerned. */
+const MARK_REACH = 2;
+/** Space kept around a phase name: from the chart's edges, other names and marks. */
+const PHASE_PADDING = 1.5;
+/** How far a phase name moves down each time its spot is taken, in SVG units. */
+const PHASE_STEP = 1;
+
+export interface Phase {
+  /** Written near the top of the chart within the phase, clear of the data. */
+  name: string;
+  /**
+   * The last day of the phase. A phase line is drawn between it and the next
+   * day, so every phase but the last needs one, each after the one before. The
+   * last phase has no line; its `endDay` only places its aim star, which
+   * otherwise goes on the last day of the chart.
+   */
+  endDay?: number;
+  /** Target count per minute, drawn as a star on the phase's last day. */
+  aim?: number;
+  /** Target celeration for the phase. Not drawn yet. */
+  celeration?: number;
+}
 
 export interface ChartOptions {
   /**
@@ -67,13 +96,20 @@ export interface ChartOptions {
    * seconds, .1 for 600). Zero or a negative number marks a day with no timing.
    */
   timingSeconds?: readonly number[];
+  /** Consecutive phases of the chart, starting at day 0. */
+  phases?: readonly Phase[];
 }
 
 /**
  * Renders a daily per-minute Standard Celeration Chart as an SVG string.
  * The SVG fills the width of its container and keeps its proportions.
  */
-export function renderChart({ corrects = [], errors = [], timingSeconds = [] }: ChartOptions = {}): string {
+export function renderChart({
+  corrects = [],
+  errors = [],
+  timingSeconds = [],
+  phases = [],
+}: ChartOptions = {}): string {
   const width = DAYS * DAY_WIDTH;
   const height = chartHeight(width);
   const x = dayScale({ left: 0, right: width });
@@ -132,21 +168,44 @@ export function renderChart({ corrects = [], errors = [], timingSeconds = [] }: 
   const errorFrequencies = perMinute(errors, timingSeconds);
 
   /**
-   * One mark per plottable day, skipping unrecorded and off-chart values. A
-   * zero goes just under the day's record floor; when corrects and errors are
+   * Where to draw each plottable day, skipping unrecorded and off-chart values.
+   * A zero goes just under the day's record floor; when corrects and errors are
    * both zero, each moves toward `side` (-1 left, 1 right) to sit side by side.
    */
-  const marks = (frequencies: readonly number[], mark: (cx: number, cy: number) => string, side = 0) =>
+  const points = (frequencies: readonly number[], side = 0): Point[] =>
     frequencies.flatMap((frequency, day) => {
       if (day > DAYS) return [];
       if (frequency === 0) {
         const floor = floors[day] ?? -1;
         if (!isPlottable(floor)) return [];
         const bothZero = correctFrequencies[day] === 0 && errorFrequencies[day] === 0;
-        return [mark(x(day) + (bothZero ? side * ZERO_SPREAD : 0), y(floor) + ZERO_DROP)];
+        return [{ x: x(day) + (bothZero ? side * ZERO_SPREAD : 0), y: y(floor) + ZERO_DROP }];
       }
-      return isPlottable(frequency) ? [mark(x(day), y(frequency))] : [];
+      return isPlottable(frequency) ? [{ x: x(day), y: y(frequency) }] : [];
     });
+  const floorPoints = points(floors);
+  const correctPoints = points(correctFrequencies, -1);
+  const errorPoints = points(errorFrequencies, 1);
+
+  const spans = phaseSpans(phases);
+  const phaseLines = spans
+    .slice(0, -1)
+    .filter(({ end }) => end + 0.5 <= DAYS)
+    .map(({ end }) => `<path class="phase" d="M${round(x(end + 0.5))} 0V${round(zeroY)}"/>`);
+  const aimPoints = spans.flatMap(({ phase, end }) =>
+    phase.aim !== undefined && isPlottable(phase.aim) && end <= DAYS ? [{ x: x(end), y: y(phase.aim) }] : [],
+  );
+  const phaseNames = placePhaseNames(
+    spans.map(({ phase, start, end }) => ({
+      name: phase.name,
+      left: x(Math.max(start - 0.5, 0)),
+      right: x(Math.min(end + 0.5, DAYS)),
+    })),
+    [...floorPoints, ...correctPoints, ...errorPoints],
+    aimPoints,
+    width,
+    height,
+  );
 
   const totalWidth = width + MARGIN.left + MARGIN.right;
   const totalHeight = zeroY + MARGIN.top + MARGIN.bottom;
@@ -158,9 +217,12 @@ export function renderChart({ corrects = [], errors = [], timingSeconds = [] }: 
     ...thinColumns,
     ...thickRows,
     ...thickColumns,
-    ...marks(floors, dash),
-    ...marks(correctFrequencies, dot, -1),
-    ...marks(errorFrequencies, cross, 1),
+    ...phaseLines,
+    ...floorPoints.map(dash),
+    ...aimPoints.map(star),
+    ...correctPoints.map(dot),
+    ...errorPoints.map(cross),
+    ...phaseNames,
     ...parts,
     `</g>`,
     `</svg>`,
@@ -181,12 +243,105 @@ text { font-family: system-ui, sans-serif; fill: #1f5f8b; }
 .y-label { font-size: 5.5px; text-anchor: end; }
 .half-label { font-size: 4.5px; opacity: 0.8; }
 .title { font-size: 6.5px; text-anchor: middle; }
+.phase { stroke: #111; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.aim { fill: #ffd60a; stroke: #1f5f8b; stroke-width: 1; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.phase-name { font-size: ${PHASE_FONT_SIZE}px; text-anchor: middle; fill: #111; paint-order: stroke; stroke: #fff; stroke-width: 1.5px; stroke-linejoin: round; }
 `;
+
+interface Point {
+  x: number;
+  y: number;
+}
+
+interface PhaseSpan {
+  phase: Phase;
+  /** First and last day of the phase. */
+  start: number;
+  end: number;
+}
+
+/** The days each phase covers, checking that the phases run in order. */
+function phaseSpans(phases: readonly Phase[]): PhaseSpan[] {
+  let start = 0;
+  return phases.map((phase, index) => {
+    const isLast = index === phases.length - 1;
+    const end = phase.endDay ?? DAYS;
+    if (!isLast && !(Number.isFinite(phase.endDay) && end >= start)) {
+      throw new RangeError(
+        `Phase "${phase.name}" needs an endDay on or after day ${start}, got ${phase.endDay}`,
+      );
+    }
+    const span = { phase, start, end };
+    start = end + 1;
+    return span;
+  });
+}
+
+interface Box {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+/**
+ * Writes each phase name centred over its phase, as near the top of the chart
+ * as it can go without covering a mark or another name. A name with nowhere
+ * clear to go stays at the top.
+ */
+function placePhaseNames(
+  names: readonly { name: string; left: number; right: number }[],
+  marks: readonly Point[],
+  aims: readonly Point[],
+  width: number,
+  height: number,
+): string[] {
+  const markBoxes = [
+    ...marks.map((mark) => ({ mark, reach: MARK_REACH })),
+    ...aims.map((mark) => ({ mark, reach: STAR_RADIUS })),
+  ].map(({ mark, reach }) => ({
+    left: mark.x - reach,
+    right: mark.x + reach,
+    top: mark.y - reach,
+    bottom: mark.y + reach,
+  }));
+  const placed: Box[] = [];
+  return names.map(({ name, left, right }) => {
+    const halfWidth = (name.length * PHASE_CHAR_WIDTH * PHASE_FONT_SIZE) / 2;
+    const centre = Math.min(
+      Math.max((left + right) / 2, halfWidth + PHASE_PADDING),
+      width - halfWidth - PHASE_PADDING,
+    );
+    const boxAt = (top: number): Box => ({
+      left: centre - halfWidth,
+      right: centre + halfWidth,
+      top,
+      bottom: top + PHASE_FONT_SIZE,
+    });
+    const isClear = (box: Box) =>
+      ![...markBoxes, ...placed].some(
+        (other) =>
+          box.left - PHASE_PADDING < other.right &&
+          other.left < box.right + PHASE_PADDING &&
+          box.top - PHASE_PADDING < other.bottom &&
+          other.top < box.bottom + PHASE_PADDING,
+      );
+    let box = boxAt(PHASE_PADDING);
+    for (let top = PHASE_PADDING; top + PHASE_FONT_SIZE <= height; top += PHASE_STEP) {
+      if (isClear(boxAt(top))) {
+        box = boxAt(top);
+        break;
+      }
+    }
+    placed.push(box);
+    // The baseline sits below most of the letters, close to the bottom of the box.
+    return text(centre, box.bottom - PHASE_FONT_SIZE * 0.2, escapeXml(name), "phase-name");
+  });
+}
 
 function formatFrequency(frequency: number): string {
   return frequency < 1 ? String(frequency).replace(/^0/, "") : String(frequency);
 }
-
 
 /**
  * Each day's count per minute of its timing, or -1 (unrecorded) for a day
@@ -203,18 +358,27 @@ function isPlottable(frequency: number): boolean {
   return frequency >= MIN_FREQUENCY && frequency <= MAX_FREQUENCY;
 }
 
-function dot(cx: number, cy: number): string {
+function dot({ x: cx, y: cy }: Point): string {
   return `<circle class="correct" cx="${round(cx)}" cy="${round(cy)}" r="${DOT_RADIUS}"/>`;
 }
 
-function cross(cx: number, cy: number): string {
+function cross({ x: cx, y: cy }: Point): string {
   const [left, right, top, bottom] = [cx - CROSS_SIZE, cx + CROSS_SIZE, cy - CROSS_SIZE, cy + CROSS_SIZE].map(round);
   return `<path class="error" d="M${left} ${top}L${right} ${bottom}M${left} ${bottom}L${right} ${top}"/>`;
 }
 
-function dash(cx: number, cy: number): string {
+function dash({ x: cx, y: cy }: Point): string {
   const [left, right, y] = [cx - FLOOR_SIZE, cx + FLOOR_SIZE, cy].map(round);
   return `<path class="floor" d="M${left} ${y}H${right}"/>`;
+}
+
+function star({ x: cx, y: cy }: Point): string {
+  const corners = Array.from({ length: 10 }, (_, corner) => {
+    const radius = corner % 2 === 0 ? STAR_RADIUS : STAR_INNER_RADIUS;
+    const angle = (corner * Math.PI) / 5 - Math.PI / 2;
+    return `${round(cx + radius * Math.cos(angle))} ${round(cy + radius * Math.sin(angle))}`;
+  });
+  return `<path class="aim" d="M${corners.join("L")}Z"/>`;
 }
 
 function line(x1: number, y1: number, x2: number, y2: number, cls: string): string {
@@ -223,6 +387,10 @@ function line(x1: number, y1: number, x2: number, y2: number, cls: string): stri
 
 function text(x: number, y: number, content: string, cls: string): string {
   return `<text class="${cls}" x="${round(x)}" y="${round(y)}">${content}</text>`;
+}
+
+function escapeXml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
 }
 
 function round(value: number): number {
