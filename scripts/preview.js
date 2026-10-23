@@ -52,7 +52,7 @@ main { max-width: 1100px; }
 </head>
 <body>
 <main>
-${renderChart({ corrects, errors, timingSeconds, phases })}
+${renderChart({ corrects, errors, timingSeconds, phases, startDate: "2026-09-06" })}
 </main>
 <script>
 ${pageScript("zoom.js")}

@@ -788,3 +788,58 @@ describe("renderChart cards", () => {
     expect(aimed).toMatch(/<g class="mark"[^>]*><path class="aim"[^>]*\/><circle class="hover-area"[^>]* r="3"/);
   });
 });
+
+describe("renderChart dates", () => {
+  const xLabels = (svg: string) => [...svg.matchAll(/class="x-label"[^>]*>([^<]*)<\/text>/g)].map((match) => match[1]);
+
+  it("numbers the days without a start date", () => {
+    const svg = renderChart();
+    expect(xLabels(svg)).toEqual(Array.from({ length: DAYS / 14 + 1 }, (_, index) => String(index * 14)));
+    expect(svg).toContain(">Successive calendar days</text>");
+  });
+
+  it("dates the days from the Sunday on or before the start date, with the year in the title", () => {
+    // September 7th 2026 is a Monday.
+    const svg = renderChart({ startDate: "2026-09-07" });
+    expect(xLabels(svg).slice(0, 3)).toEqual(["Sep 6", "Sep 20", "Oct 4"]);
+    expect(xLabels(svg).at(-1)).toBe("Jan 24");
+    expect(xLabels(renderChart({ startDate: "2026-09-06" }))[0]).toBe("Sep 6");
+    expect(xLabels(renderChart({ startDate: "2026-09-12" }))[0]).toBe("Sep 6");
+    expect(svg).toContain(">Successive calendar days · 2026–2027</text>");
+    expect(renderChart({ startDate: "2026-01-05" })).toContain(">Successive calendar days · 2026</text>");
+  });
+
+  it("draws the counts from the start date, leaving the days before it empty", () => {
+    // September 9th 2026 is a Wednesday, three days after the chart's Sunday.
+    const svg = renderChart({ startDate: "2026-09-09", corrects: [10], errors: [2], timingSeconds: [60] });
+    expect(svg).toContain(`<circle class="correct" cx="${3 * DAY_WIDTH}"`);
+    expect(svg.match(/<circle class="correct"/g)).toHaveLength(1);
+    expect(svg.match(/<path class="floor"/g)).toHaveLength(1);
+    expect(svg).toContain('data-card="Wed, Sep 9 · Correct');
+    expect(svg).toContain('data-card="Wed, Sep 9 · Error');
+  });
+
+  it("counts phase end days from the start date and runs the last phase to the end of the chart", () => {
+    const svg = renderChart({
+      startDate: "2026-09-09",
+      phases: [{ name: "Baseline", endDay: 4 }, { name: "Practice", aim: 50 }],
+    });
+    const phaseX = Number(svg.match(/<path class="phase" d="M([\d.]+) /)?.[1]);
+    expect(phaseX).toBeCloseTo((4 + 3 + 0.5) * DAY_WIDTH);
+    expect(svg).toContain('data-card="Sun, Jan 24 · Aim');
+  });
+
+  it("reports phase end days as given", () => {
+    expect(() =>
+      renderChart({ startDate: "2026-09-09", phases: [{ name: "A", endDay: 4 }, { name: "B", endDay: 2 }, { name: "C" }] }),
+    ).toThrow('Phase "B" needs an endDay on or after day 5, got 2');
+  });
+
+  it("dates the cards", () => {
+    const svg = renderChart({ startDate: "2026-09-07", corrects: [10, -1, 20], timingSeconds: [60, 60, 60] });
+    const lines = svg.match(/data-card="(Mon, Sep 7 · Correct[^"]*)"/)?.[1]?.split("&#10;");
+    expect(lines?.[3]).toMatch(/^Wed, Sep 9 target/);
+    expect(lines?.[4]).toBe("Wed, Sep 9: 20 per minute — Hit");
+    expect(svg).toContain('data-card="Mon, Sep 7 · Record floor');
+  });
+});
