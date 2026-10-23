@@ -26,6 +26,13 @@ const errors = timingSeconds.map((seconds, day) =>
         : Math.max(0, Math.round((6 * 0.8 ** (day / 7) - ((day * 13) % 3)) * minutes(day))),
 );
 
+// Sample phases: a baseline week, then practice towards an aim.
+const phases = [
+  { name: "Baseline", endDay: 6 },
+  { name: "Practice", endDay: 34, aim: 20, celeration: 2 },
+  { name: "Two minute timings", aim: 25, celeration: 1.5 },
+];
+
 const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -38,7 +45,7 @@ main { max-width: 1100px; }
 </head>
 <body>
 <main>
-${renderChart({ corrects, errors, timingSeconds })}
+${renderChart({ corrects, errors, timingSeconds, phases })}
 </main>
 </body>
 </html>

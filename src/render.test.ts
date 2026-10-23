@@ -269,3 +269,121 @@ describe("renderChart record floors", () => {
     expect(floor).toBeLessThan(svg.indexOf('<path class="error"'));
   });
 });
+
+describe("renderChart phases", () => {
+  const phaseLinesIn = (svg: string) =>
+    [...svg.matchAll(/<path class="phase" d="M([\d.]+) ([\d.]+)V([\d.]+)"/g)].map((match) => ({
+      x: Number(match[1]),
+      top: Number(match[2]),
+      bottom: Number(match[3]),
+    }));
+  const namesIn = (svg: string) =>
+    [...svg.matchAll(/<text class="phase-name" x="([\d.]+)" y="([\d.]+)">([^<]*)<\/text>/g)].map((match) => ({
+      x: Number(match[1]),
+      y: Number(match[2]),
+      name: match[3],
+    }));
+  const starsIn = (svg: string) =>
+    [...svg.matchAll(/<path class="aim" d="M([\d.]+) ([\d.]+)L/g)].map((match) => ({
+      // The path starts at the top point, STAR_RADIUS above the centre.
+      x: Number(match[1]),
+      y: Number(match[2]) + 3,
+    }));
+  const labelY = (svg: string, label: string) => Number(svg.match(new RegExp(`y="([\\d.]+)">${label}</text>`))?.[1]);
+  const zeroY = (svg: string) => Number(svg.match(/class="zero" x1="0" y1="([\d.]+)"/)?.[1]);
+
+  it("draws no phase line for a single phase, even with an end day", () => {
+    expect(phaseLinesIn(renderChart({ phases: [{ name: "Baseline", endDay: 10 }] }))).toEqual([]);
+  });
+
+  it("draws a line between each phase and the next, from the top of the chart to the zero line", () => {
+    const svg = renderChart({
+      phases: [{ name: "Baseline", endDay: 6 }, { name: "Practice", endDay: 20 }, { name: "Review" }],
+    });
+    const lines = phaseLinesIn(svg);
+    expect(lines.map((line) => line.x)).toEqual([6.5 * DAY_WIDTH, 20.5 * DAY_WIDTH]);
+    for (const line of lines) {
+      expect(line.top).toBe(0);
+      expect(line.bottom).toBe(zeroY(svg));
+    }
+  });
+
+  it("draws the phase lines over the grid and under the marks", () => {
+    const svg = renderChart({ corrects: [1], timingSeconds: [60], phases: [{ name: "A", endDay: 0 }, { name: "B" }] });
+    const phase = svg.indexOf('<path class="phase"');
+    expect(phase).toBeGreaterThan(svg.lastIndexOf("<line"));
+    expect(phase).toBeLessThan(svg.indexOf("<circle"));
+  });
+
+  it("skips a phase line past the last day", () => {
+    const svg = renderChart({ phases: [{ name: "A", endDay: DAYS }, { name: "B" }] });
+    expect(phaseLinesIn(svg)).toEqual([]);
+  });
+
+  it("throws when a phase before the last has no end day or ends before it starts", () => {
+    expect(() => renderChart({ phases: [{ name: "A" }, { name: "B" }] })).toThrow(RangeError);
+    expect(() =>
+      renderChart({ phases: [{ name: "A", endDay: 10 }, { name: "B", endDay: 5 }, { name: "C" }] }),
+    ).toThrow(RangeError);
+  });
+
+  it("writes each name just under the top of the chart, centred over its phase", () => {
+    const svg = renderChart({ phases: [{ name: "Baseline", endDay: 13 }, { name: "Practice" }] });
+    const [first, second] = namesIn(svg);
+    expect(first?.name).toBe("Baseline");
+    // The first phase runs from the edge of the chart to its phase line at 13.5.
+    expect(first?.x).toBeCloseTo(6.75 * DAY_WIDTH);
+    expect(second?.x).toBeCloseTo(((13.5 + DAYS) / 2) * DAY_WIDTH);
+    for (const name of [first, second]) {
+      expect(name?.y).toBeGreaterThan(0);
+      expect(name?.y).toBeLessThan(10);
+    }
+  });
+
+  it("escapes names", () => {
+    expect(renderChart({ phases: [{ name: "Say <b> & \"hi\"" }] })).toContain(
+      ">Say &#60;b&#62; &#38; &#34;hi&#34;</text>",
+    );
+  });
+
+  it("keeps a name inside the chart when its phase is at the edge", () => {
+    const [name] = namesIn(renderChart({ phases: [{ name: "A long phase name", endDay: 0 }, { name: "B" }] }));
+    expect(name?.x).toBeGreaterThan(0.6 * 5 * "A long phase name".length * 0.5);
+  });
+
+  it("moves a name down to clear a mark at the top of the chart", () => {
+    const clear = namesIn(renderChart({ phases: [{ name: "Fluency" }] }))[0];
+    const corrects = Array<number>(DAYS + 1).fill(1000);
+    const timingSeconds = Array<number>(DAYS + 1).fill(60);
+    const svg = renderChart({ corrects, timingSeconds, phases: [{ name: "Fluency" }] });
+    const [moved] = namesIn(svg);
+    expect(moved?.y).toBeGreaterThan(clear?.y ?? NaN);
+    expect(moved?.y).toBeLessThan(labelY(svg, "500"));
+  });
+
+  it("stacks names of narrow phases instead of overlapping them", () => {
+    const [first, second] = namesIn(
+      renderChart({ phases: [{ name: "Warm up", endDay: 1 }, { name: "Cool down", endDay: 3 }, { name: "Rest" }] }),
+    );
+    expect(Math.abs((first?.y ?? NaN) - (second?.y ?? NaN))).toBeGreaterThanOrEqual(5);
+  });
+
+  it("draws the aim as a star on the phase's last day", () => {
+    const svg = renderChart({ phases: [{ name: "A", endDay: 10, aim: 10 }, { name: "B", aim: 100 }] });
+    const [first, second] = starsIn(svg);
+    expect(first?.x).toBeCloseTo(10 * DAY_WIDTH);
+    expect(first?.y).toBeCloseTo(labelY(svg, "10") - 2);
+    expect(second?.x).toBeCloseTo(DAYS * DAY_WIDTH);
+    expect(second?.y).toBeCloseTo(labelY(svg, "100") - 2);
+  });
+
+  it("places the last phase's star on its end day when it has one", () => {
+    const [star] = starsIn(renderChart({ phases: [{ name: "A", endDay: 30, aim: 10 }] }));
+    expect(star?.x).toBeCloseTo(30 * DAY_WIDTH);
+  });
+
+  it("skips aims off the chart", () => {
+    const svg = renderChart({ phases: [{ name: "A", endDay: 10, aim: 2000 }, { name: "B", aim: 0 }] });
+    expect(starsIn(svg)).toEqual([]);
+  });
+});
