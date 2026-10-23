@@ -92,10 +92,11 @@ export interface ChartOptions {
    * a timing, marks a day with nothing recorded. A count of zero is drawn just
    * under the day's record floor, beside a zero error if there is one.
    * Frequencies or record floors outside .001–1000 and days past the last day
-   * of the chart are not drawn.
+   * of the chart are not drawn. A dashed best fit line runs through the
+   * counts in each phase, or the whole chart without phases.
    */
   corrects?: readonly number[];
-  /** Error counts, drawn as an X. Same format as `corrects`. */
+  /** Error counts, drawn as an X with a red best fit line. Same format as `corrects`. */
   errors?: readonly number[];
   /**
    * Length of each day's timing in seconds, one per consecutive day starting at
@@ -205,20 +206,30 @@ export function renderChart({
       return `<path class="phase" d="M${phaseX} 0V${round(weekTailY)}M${phaseX} ${round(nubY)}V${round(zeroY)}"/>`;
     });
   const learning = spans.map((span) => learningLine(span, correctFrequencies));
-  const learningLines = learning.flatMap((line) =>
-    line && line.end > line.start
-      ? [`<path class="learning" d="M${round(x(line.start))} ${round(y(line.from))}L${round(x(line.end))} ${round(y(line.to))}"/>`]
-      : [],
-  );
-  // Points every day along each learning line, for phase names to keep clear of.
-  const learningPoints = learning.flatMap((line) =>
-    line
-      ? Array.from({ length: Math.floor(line.end - line.start) + 1 }, (_, step) => {
-          const day = line.start + step;
-          return { x: x(day), y: y(line.from * line.celeration ** (step / 7)) };
-        })
-      : [],
-  );
+  // Without phases, the whole chart gets one pair of best fit lines.
+  const fitSpans = spans.length > 0 ? spans : [{ start: 0, end: DAYS }];
+  /**
+   * Zero has no place on a log scale, so a zero counts as half its day's record
+   * floor, following White & Neely (2004). A zero is left out, like its mark,
+   * when its record floor is off the chart; so are other frequencies off it.
+   */
+  const fits = (frequencies: readonly number[]) => {
+    const values = frequencies.map((frequency, day) => {
+      const floor = floors[day] ?? -1;
+      if (frequency === 0) return isPlottable(floor) ? floor / 2 : -1;
+      return isPlottable(frequency) ? frequency : -1;
+    });
+    return fitSpans.flatMap(({ start, end }) => bestFit(values, start, end) ?? []);
+  };
+  const [correctFits, errorFits] = [fits(correctFrequencies), fits(errorFrequencies)];
+  const trendPath = (trend: Trend, cls: string) =>
+    `<path class="${cls}" d="M${round(x(trend.start))} ${round(y(trend.from))}L${round(x(trend.end))} ${round(y(trend.to))}"/>`;
+  // Points every day along a trend, for phase names to keep clear of.
+  const trendPoints = (trend: Trend) =>
+    Array.from({ length: Math.floor(trend.end - trend.start) + 1 }, (_, step) => ({
+      x: x(trend.start + step),
+      y: y(trend.from * trend.celeration ** (step / 7)),
+    }));
   const aimPoints = spans.flatMap(({ phase, end }, index) => {
     const day = learning[index]?.aimDay ?? end;
     return phase.aim !== undefined && isPlottable(phase.aim) && day <= DAYS ? [{ x: x(day), y: y(phase.aim) }] : [];
@@ -229,7 +240,12 @@ export function renderChart({
       left: x(Math.max(start - 0.5, 0)),
       right: x(Math.min(end + 0.5, DAYS)),
     })),
-    [...floorPoints, ...correctPoints, ...errorPoints, ...learningPoints],
+    [
+      ...floorPoints,
+      ...correctPoints,
+      ...errorPoints,
+      ...[...learning.flatMap((line) => line ?? []), ...correctFits, ...errorFits].flatMap(trendPoints),
+    ],
     aimPoints,
     width,
     height,
@@ -246,7 +262,9 @@ export function renderChart({
     ...thickRows,
     ...thickColumns,
     ...phaseLines,
-    ...learningLines,
+    ...learning.flatMap((line) => (line && line.end > line.start ? [trendPath(line, "learning")] : [])),
+    ...correctFits.map((fit) => trendPath(fit, "fit correct-fit")),
+    ...errorFits.map((fit) => trendPath(fit, "fit error-fit")),
     ...floorPoints.map(dash),
     ...aimPoints.map(star),
     ...correctPoints.map(dot),
@@ -274,6 +292,9 @@ text { font-family: system-ui, sans-serif; fill: #1f5f8b; }
 .title { font-size: 6.5px; text-anchor: middle; }
 .phase { stroke: #111; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .learning { stroke: #111; stroke-width: 1.25; fill: none; vector-effect: non-scaling-stroke; }
+.fit { fill: none; stroke-width: 1.25; stroke-dasharray: 5 3; vector-effect: non-scaling-stroke; }
+.correct-fit { stroke: #111; }
+.error-fit { stroke: #d62828; }
 .aim { fill: #ffd60a; stroke: #1f5f8b; stroke-width: 1; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .phase-name { font-size: ${PHASE_FONT_SIZE}px; text-anchor: middle; fill: #111; paint-order: stroke; stroke: #fff; stroke-width: 1.5px; stroke-linejoin: round; }
 `;
@@ -307,13 +328,18 @@ function phaseSpans(phases: readonly Phase[]): PhaseSpan[] {
   });
 }
 
-interface LearningLine {
+/** A straight line on the chart: a frequency changing by a steady celeration. */
+interface Trend {
   /** Days the line runs between, and the frequencies at each end. */
   start: number;
   end: number;
   from: number;
   to: number;
+  /** Change in frequency per week. */
   celeration: number;
+}
+
+interface LearningLine extends Trend {
   /** First whole day the line reaches the aim, if it does. */
   aimDay: number | undefined;
 }
@@ -345,6 +371,38 @@ function learningLine({ phase, start, end }: PhaseSpan, corrects: readonly numbe
     // Allow for rounding error so an aim met on a whole day stays on that day.
     aimDay: reachesAim ? Math.ceil(first + toAim - 1e-9) : undefined,
   };
+}
+
+/**
+ * The least squares line through the log of each frequency above zero from
+ * `start` to `end`, running from the first of them to the last and stopping at
+ * the edges of the chart. Needs two days to fit; other days are left out.
+ */
+function bestFit(frequencies: readonly number[], start: number, end: number): Trend | undefined {
+  const days: number[] = [];
+  const logs: number[] = [];
+  for (let day = start; day <= Math.min(end, DAYS); day++) {
+    const frequency = frequencies[day] ?? -1;
+    if (frequency > 0) {
+      days.push(day);
+      logs.push(Math.log10(frequency));
+    }
+  }
+  const [first, last] = [days[0], days.at(-1)];
+  if (first === undefined || last === undefined || first === last) return undefined;
+  const mean = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length;
+  const [meanDay, meanLog] = [mean(days), mean(logs)];
+  const slope =
+    days.reduce((sum, day, index) => sum + (day - meanDay) * ((logs[index] ?? 0) - meanLog), 0) /
+    days.reduce((sum, day) => sum + (day - meanDay) ** 2, 0);
+  const logAt = (day: number) => meanLog + slope * (day - meanDay);
+  // Days where the line crosses the top and bottom of the chart.
+  const [lowestLog, highestLog] = [Math.log10(MIN_FREQUENCY), Math.log10(MAX_FREQUENCY)];
+  const crossings =
+    slope === 0 ? [] : [lowestLog, highestLog].map((log) => meanDay + (log - meanLog) / slope).sort((a, b) => a - b);
+  const [from, to] = [Math.max(first, crossings[0] ?? first), Math.min(last, crossings[1] ?? last)];
+  if (!(from < to)) return undefined;
+  return { start: from, end: to, from: 10 ** logAt(from), to: 10 ** logAt(to), celeration: 10 ** (slope * 7) };
 }
 
 interface Box {
