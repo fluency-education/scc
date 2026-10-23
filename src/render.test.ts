@@ -506,3 +506,97 @@ describe("renderChart learning lines", () => {
     expect(learning).toBeLessThan(svg.indexOf("<circle"));
   });
 });
+
+describe("renderChart best fit lines", () => {
+  const fitsIn = (svg: string, kind: "correct" | "error") =>
+    [...svg.matchAll(new RegExp(`<path class="fit ${kind}-fit" d="M([\\d.]+) ([\\d.]+)L([\\d.]+) ([\\d.]+)"`, "g"))].map(
+      (match) => ({ x1: Number(match[1]), y1: Number(match[2]), x2: Number(match[3]), y2: Number(match[4]) }),
+    );
+  const labelY = (svg: string, label: string) => Number(svg.match(new RegExp(`y="([\\d.]+)">${label}</text>`))?.[1]);
+  const timingSeconds = Array<number>(DAYS + 1).fill(60);
+
+  it("runs through counts on a straight celeration from the first to the last", () => {
+    // ×2 a week, exactly on the line.
+    const corrects = [-1, 10, -1, -1, -1, -1, -1, -1, 20, -1, -1, -1, -1, -1, -1, 40];
+    const svg = renderChart({ corrects, timingSeconds });
+    const [fit] = fitsIn(svg, "correct");
+    expect(fit?.x1).toBeCloseTo(DAY_WIDTH);
+    expect(fit?.y1).toBeCloseTo(labelY(svg, "10") - 2, 1);
+    expect(fit?.x2).toBeCloseTo(15 * DAY_WIDTH);
+    expect(fit?.y2).toBeCloseTo(labelY(svg, "10") - 2 - (labelY(svg, "1") - labelY(svg, "10")) * Math.log10(4), 1);
+  });
+
+  it("fits the log of the counts by least squares", () => {
+    // 1, 100, 1 averages to a flat line at 10^(2/3) per minute.
+    const svg = renderChart({ corrects: [1, 100, 1], timingSeconds });
+    const [fit] = fitsIn(svg, "correct");
+    const expected = labelY(svg, "1") - 2 - (labelY(svg, "1") - labelY(svg, "10")) * (2 / 3);
+    expect(fit?.y1).toBeCloseTo(expected, 1);
+    expect(fit?.y2).toBeCloseTo(expected, 1);
+  });
+
+  it("draws a red line through the errors", () => {
+    const svg = renderChart({ corrects: [5, 5], errors: [4, 2], timingSeconds });
+    expect(fitsIn(svg, "correct")).toHaveLength(1);
+    const [fit] = fitsIn(svg, "error");
+    expect(fit?.y2).toBeLessThan(labelY(svg, "1"));
+    expect(fit?.y2).toBeGreaterThan(fit?.y1 ?? NaN);
+  });
+
+  it("needs two days to fit", () => {
+    expect(fitsIn(renderChart({ corrects: [5, -1], timingSeconds }), "correct")).toEqual([]);
+  });
+
+  it("counts a zero as half its record floor", () => {
+    // Zeros in a 1 minute and a 10 minute timing count as .5 and .05.
+    const svg = renderChart({ corrects: [0, 0], timingSeconds: [60, 600] });
+    const [fit] = fitsIn(svg, "correct");
+    const cycle = labelY(svg, "1") - labelY(svg, "10");
+    expect(fit?.x1).toBeCloseTo(0);
+    expect(fit?.x2).toBeCloseTo(DAY_WIDTH);
+    expect(fit?.y1).toBeCloseTo(labelY(svg, "1") - 2 + cycle * Math.log10(2), 1);
+    expect(fit?.y2).toBeCloseTo(labelY(svg, ".1") - 2 + cycle * Math.log10(2), 1);
+  });
+
+  it("pulls the line down for zero corrects and up for zero errors that would otherwise be left out", () => {
+    const corrects = [10, 10, 10, 0];
+    const errors = [0, 2, 2, 2];
+    const svg = renderChart({ corrects, errors, timingSeconds });
+    const [correctFit] = fitsIn(svg, "correct");
+    const [errorFit] = fitsIn(svg, "error");
+    expect(correctFit?.x2).toBeCloseTo(3 * DAY_WIDTH);
+    expect(correctFit?.y2).toBeGreaterThan(correctFit?.y1 ?? NaN);
+    expect(errorFit?.x1).toBeCloseTo(0);
+    expect(errorFit?.y2).toBeLessThan(errorFit?.y1 ?? NaN);
+  });
+
+  it("leaves out a zero whose record floor is off the chart", () => {
+    const svg = renderChart({ corrects: [5, 5, 0], timingSeconds: [60, 60, 2000 * 60] });
+    expect(fitsIn(svg, "correct")[0]?.x2).toBeCloseTo(DAY_WIDTH);
+  });
+
+  it("fits each phase on its own", () => {
+    const svg = renderChart({
+      corrects: [10, 10, 10, 40, 20],
+      timingSeconds,
+      phases: [{ name: "A", endDay: 2 }, { name: "B", endDay: 3 }, { name: "C" }],
+    });
+    const fits = fitsIn(svg, "correct");
+    // Phase B has one day, too few to fit.
+    expect(fits.map((fit) => [fit.x1, fit.x2])).toEqual([[0, 2 * DAY_WIDTH]]);
+  });
+
+  it("stops at the top of the chart", () => {
+    const svg = renderChart({ corrects: [100, 500, 1000, 1000], timingSeconds });
+    const [fit] = fitsIn(svg, "correct");
+    expect(fit?.y2).toBeCloseTo(0);
+    expect(fit?.x2).toBeLessThan(3 * DAY_WIDTH);
+  });
+
+  it("draws the lines over the grid and under the marks", () => {
+    const svg = renderChart({ corrects: [5, 6], errors: [1, 2], timingSeconds });
+    const fit = svg.indexOf('<path class="fit');
+    expect(fit).toBeGreaterThan(svg.lastIndexOf("<line"));
+    expect(svg.lastIndexOf('<path class="fit')).toBeLessThan(svg.indexOf("<circle"));
+  });
+});
