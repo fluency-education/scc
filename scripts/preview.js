@@ -34,10 +34,11 @@ const phases = [
 ];
 
 // The preview opens from disk, where modules cannot be imported, so the zoom
-// code is copied into the page as a plain script.
-const zoomScript = readFileSync(new URL("../dist/zoom.js", import.meta.url), "utf8")
-  .replace(/^export /gm, "")
-  .replace(/^\/\/# sourceMappingURL=.*$/m, "");
+// and hover code is copied into the page as plain scripts.
+const pageScript = (file) =>
+  readFileSync(new URL(`../dist/${file}`, import.meta.url), "utf8")
+    .replace(/^export /gm, "")
+    .replace(/^\/\/# sourceMappingURL=.*$/m, "");
 
 const html = `<!doctype html>
 <html lang="en">
@@ -54,8 +55,11 @@ main { max-width: 1100px; }
 ${renderChart({ corrects, errors, timingSeconds, phases })}
 </main>
 <script>
-${zoomScript}
-enableZoom(document.querySelector("main > svg"));
+${pageScript("zoom.js")}
+${pageScript("hover.js")}
+const chart = document.querySelector("main > svg");
+enableZoom(chart);
+enableHover(chart);
 </script>
 </body>
 </html>
