@@ -32,6 +32,10 @@ const MARGIN = { top: 12, right: 12, bottom: 30, left: 38 };
 const PLOT_PADDING = 3;
 /** Room kept around the current phase when zooming in on it, in SVG units. */
 const FOCUS_PADDING = 6;
+/** Radius around a plotted mark that brings up its card, in SVG units. */
+const HOVER_RADIUS = 2.25;
+/** Celeration a correct's next-day target grows by when its phase has none. */
+const DEFAULT_CELERATION = 2;
 /** Size of a zoom button, in SVG units. */
 const ZOOM_BUTTON = 7;
 
@@ -121,7 +125,8 @@ export interface ChartOptions {
 /**
  * Renders a daily per-minute Standard Celeration Chart as an SVG string.
  * The SVG fills the width of its container and keeps its proportions. Its zoom
- * control stays hidden until the chart is passed to enableZoom.
+ * control stays hidden until the chart is passed to enableZoom, and its marks
+ * and lines show their details on hover once it is passed to enableHover.
  */
 export function renderChart({
   corrects = [],
@@ -191,16 +196,16 @@ export function renderChart({
    * A zero goes just under the day's record floor; when corrects and errors are
    * both zero, each moves toward `side` (-1 left, 1 right) to sit side by side.
    */
-  const points = (frequencies: readonly number[], side = 0): Point[] =>
+  const points = (frequencies: readonly number[], side = 0): Mark[] =>
     frequencies.flatMap((frequency, day) => {
       if (day > DAYS) return [];
       if (frequency === 0) {
         const floor = floors[day] ?? -1;
         if (!isPlottable(floor)) return [];
         const bothZero = correctFrequencies[day] === 0 && errorFrequencies[day] === 0;
-        return [{ x: x(day) + (bothZero ? side * ZERO_SPREAD : 0), y: y(floor) + ZERO_DROP }];
+        return [{ x: x(day) + (bothZero ? side * ZERO_SPREAD : 0), y: y(floor) + ZERO_DROP, day, frequency }];
       }
-      return isPlottable(frequency) ? [{ x: x(day), y: y(frequency) }] : [];
+      return isPlottable(frequency) ? [{ x: x(day), y: y(frequency), day, frequency }] : [];
     });
   const floorPoints = points(floors);
   const correctPoints = points(correctFrequencies, -1);
@@ -232,8 +237,44 @@ export function renderChart({
     return fitSpans.flatMap(({ start, end }) => bestFit(values, start, end) ?? []);
   };
   const [correctFits, errorFits] = [fits(correctFrequencies), fits(errorFrequencies)];
-  const trendPath = (trend: Trend, cls: string) =>
-    `<path class="${cls}" d="M${round(x(trend.start))} ${round(y(trend.from))}L${round(x(trend.end))} ${round(y(trend.to))}"/>`;
+  /** A trend with its card, over a wider unpainted copy that is easier to point at. */
+  const trendPath = (trend: Trend, cls: string, name: string) => {
+    const d = `M${round(x(trend.start))} ${round(y(trend.from))}L${round(x(trend.end))} ${round(y(trend.to))}`;
+    const card = cardAttributes([name, `${formatCeleration(trend.celeration)} per week`]);
+    return `<g class="trend"${card}><path class="${cls}" d="${d}"/><path class="hover-area" d="${d}"/></g>`;
+  };
+  /** The count a day's rate came from, and the timing it was counted in. */
+  const counted = (counts: readonly number[], day: number) =>
+    `${counts[day]} in a ${formatTiming(timingSeconds[day] ?? 0)} timing`;
+  /**
+   * A correct's card: its rate, and the target for the next recorded day, at
+   * its phase's celeration from this one. Once that day is recorded, whether it
+   * hit the target: reaching it, or for a falling celeration, staying under it.
+   */
+  const correctCard = ({ day, frequency }: Mark) => {
+    const lines = [`Day ${day} · Correct`, `${formatRate(frequency)} per minute`, counted(corrects, day)];
+    if (frequency === 0) return cardAttributes(lines);
+    const celeration = spans.find(({ start, end }) => day >= start && day <= end)?.phase.celeration ?? DEFAULT_CELERATION;
+    const recorded = correctFrequencies.findIndex((next, nextDay) => nextDay > day && next >= 0);
+    const nextDay = recorded === -1 ? day + 1 : recorded;
+    const target = frequency * celeration ** ((nextDay - day) / 7);
+    lines.push(`Day ${nextDay} target (${formatCeleration(celeration)}/week): ${formatRate(target)}`);
+    const next = correctFrequencies[recorded];
+    if (next === undefined) return cardAttributes(lines);
+    const hit = celeration >= 1 ? next >= target * (1 - 1e-9) : next <= target * (1 + 1e-9);
+    lines.push(`Day ${nextDay}: ${formatRate(next)} per minute — ${hit ? "Hit" : "Miss"}`);
+    return cardAttributes(lines, hit ? "hit" : "miss");
+  };
+  const errorCard = ({ day, frequency }: Mark) =>
+    cardAttributes([`Day ${day} · Error`, `${formatRate(frequency)} per minute`, counted(errors, day)]);
+  const floorCard = ({ day, frequency }: Mark) =>
+    cardAttributes([
+      `Day ${day} · Record floor`,
+      `${formatRate(frequency)} per minute`,
+      `${formatTiming(timingSeconds[day] ?? 0)} timing`,
+    ]);
+  const aimCard = ({ day, frequency }: Mark) =>
+    cardAttributes([`Day ${day} · Aim`, `${formatRate(frequency)} per minute`]);
   // Points every day along a trend, for phase names to keep clear of.
   const trendPoints = (trend: Trend) =>
     Array.from({ length: Math.floor(trend.end - trend.start) + 1 }, (_, step) => ({
@@ -242,7 +283,9 @@ export function renderChart({
     }));
   const aimPoints = spans.flatMap(({ phase, end }, index) => {
     const day = learning[index]?.aimDay ?? end;
-    return phase.aim !== undefined && isPlottable(phase.aim) && day <= DAYS ? [{ x: x(day), y: y(phase.aim) }] : [];
+    return phase.aim !== undefined && isPlottable(phase.aim) && day <= DAYS
+      ? [{ x: x(day), y: y(phase.aim), day, frequency: phase.aim }]
+      : [];
   });
   const phaseNames = placePhaseNames(
     spans.map(({ phase, start, end }) => ({
@@ -286,13 +329,15 @@ export function renderChart({
     ...thickRows,
     ...thickColumns,
     ...phaseLines,
-    ...learning.flatMap((line) => (line && line.end > line.start ? [trendPath(line, "learning")] : [])),
-    ...correctFits.map((fit) => trendPath(fit, "fit correct-fit")),
-    ...errorFits.map((fit) => trendPath(fit, "fit error-fit")),
-    ...floorPoints.map(dash),
-    ...aimPoints.map(star),
-    ...correctPoints.map(dot),
-    ...errorPoints.map(cross),
+    ...learning.flatMap((line) =>
+      line && line.end > line.start ? [trendPath(line, "learning", "Learning line")] : [],
+    ),
+    ...correctFits.map((fit) => trendPath(fit, "fit correct-fit", "Correct best fit")),
+    ...errorFits.map((fit) => trendPath(fit, "fit error-fit", "Error best fit")),
+    ...floorPoints.map((mark) => hoverable(mark, dash(mark), floorCard(mark))),
+    ...aimPoints.map((mark) => hoverable(mark, star(mark), aimCard(mark), STAR_RADIUS)),
+    ...correctPoints.map((mark) => hoverable(mark, dot(mark), correctCard(mark))),
+    ...errorPoints.map((mark) => hoverable(mark, cross(mark), errorCard(mark))),
     ...phaseNames,
     `</svg>`,
     ...parts,
@@ -335,12 +380,27 @@ text { font-family: system-ui, sans-serif; fill: #1f5f8b; }
 .plot-area { fill: none; pointer-events: all; }
 .plot.zoomed { cursor: grab; touch-action: none; user-select: none; }
 .plot.dragging { cursor: grabbing; }
+.hover-area { fill: none; stroke: none; pointer-events: all; }
+.trend .hover-area { stroke-width: 8px; vector-effect: non-scaling-stroke; pointer-events: stroke; }
+.trend:hover path:first-child { stroke-width: 2; }
+.card { pointer-events: none; }
+.card rect { fill: #fff; stroke: #1f5f8b; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.card text { font-size: 5px; fill: #111; }
+.card .card-title { font-weight: 600; }
+.card .hit { fill: #1b7f3b; font-weight: 600; }
+.card .miss { fill: #d62828; font-weight: 600; }
 .phase-name { font-size: ${PHASE_FONT_SIZE}px; text-anchor: middle; fill: #111; paint-order: stroke; stroke: #fff; stroke-width: 1.5px; stroke-linejoin: round; }
 `;
 
 interface Point {
   x: number;
   y: number;
+}
+
+/** A plotted count: where it is drawn, and its day and count per minute. */
+interface Mark extends Point {
+  day: number;
+  frequency: number;
 }
 
 interface PhaseSpan {
@@ -534,6 +594,38 @@ function placePhaseNames(
     // The baseline sits below most of the letters, close to the bottom of the box.
     return text(centre, box.bottom - PHASE_FONT_SIZE * 0.2, escapeXml(name), "phase-name");
   });
+}
+
+/** A count per minute to three significant figures, written like the axis labels. */
+function formatRate(frequency: number): string {
+  return frequency === 0 ? "0" : formatFrequency(Number(frequency.toPrecision(3)));
+}
+
+/** A timing's length: in minutes when it is whole minutes, otherwise in seconds. */
+function formatTiming(seconds: number): string {
+  if (seconds % 60 !== 0) return `${seconds} second`;
+  return `${seconds / 60} minute`;
+}
+
+/** A celeration as the chart writes it: ×1.25 when rising, ÷1.25 when falling. */
+function formatCeleration(celeration: number): string {
+  return celeration >= 1
+    ? `×${Number(celeration.toPrecision(3))}`
+    : `÷${Number((1 / celeration).toPrecision(3))}`;
+}
+
+/**
+ * The lines of a card for enableHover to show, and whether the last one is a
+ * hit or a miss. Newlines are written as references so XML keeps them.
+ */
+function cardAttributes(lines: readonly string[], result?: "hit" | "miss"): string {
+  const card = ` data-card="${escapeXml(lines.join("\n")).replace(/\n/g, "&#10;")}"`;
+  return result ? `${card} data-result="${result}"` : card;
+}
+
+/** A mark with its card, over an unpainted circle that is easier to point at. */
+function hoverable({ x: cx, y: cy }: Point, mark: string, card: string, radius = HOVER_RADIUS): string {
+  return `<g class="mark"${card}>${mark}<circle class="hover-area" cx="${round(cx)}" cy="${round(cy)}" r="${radius}"/></g>`;
 }
 
 function formatFrequency(frequency: number): string {

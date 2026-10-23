@@ -684,3 +684,107 @@ describe("renderChart zoom", () => {
     expect(svg).toContain(".zoomable .zoom { display: inline; }");
   });
 });
+
+describe("renderChart cards", () => {
+  const cards = (svg: string) =>
+    [...svg.matchAll(/data-card="([^"]*)"(?: data-result="(\w+)")?/g)].map((match) => ({
+      lines: (match[1] ?? "").split("&#10;"),
+      result: match[2],
+    }));
+  const card = (svg: string, title: string) => cards(svg).find(({ lines }) => lines[0] === title);
+  const timingSeconds = Array.from({ length: 20 }, () => 60);
+
+  it("gives a correct its day, rate, count and timing, and the next day's target at its phase's celeration", () => {
+    const svg = renderChart({
+      corrects: [10, 12],
+      timingSeconds,
+      phases: [{ name: "Practice", celeration: 1.25 }],
+    });
+    const target = 10 * 1.25 ** (1 / 7);
+    expect(card(svg, "Day 0 · Correct")?.lines).toEqual([
+      "Day 0 · Correct",
+      "10 per minute",
+      "10 in a 1 minute timing",
+      `Day 1 target (×1.25/week): ${Number(target.toPrecision(3))}`,
+      "Day 1: 12 per minute — Hit",
+    ]);
+    expect(card(svg, "Day 0 · Correct")?.result).toBe("hit");
+  });
+
+  it("aims for ×2 per week without a phase celeration, and marks a miss", () => {
+    const svg = renderChart({ corrects: [10, 10], timingSeconds });
+    const { lines, result } = card(svg, "Day 0 · Correct") ?? {};
+    expect(lines?.[3]).toBe(`Day 1 target (×2/week): ${Number((10 * 2 ** (1 / 7)).toPrecision(3))}`);
+    expect(lines?.[4]).toBe("Day 1: 10 per minute — Miss");
+    expect(result).toBe("miss");
+  });
+
+  it("sets the target for the next recorded day, however far off", () => {
+    const svg = renderChart({ corrects: [10, -1, -1, 20], timingSeconds });
+    const { lines } = card(svg, "Day 0 · Correct") ?? {};
+    expect(lines?.[3]).toBe(`Day 3 target (×2/week): ${Number((10 * 2 ** (3 / 7)).toPrecision(3))}`);
+    expect(lines?.[4]).toBe("Day 3: 20 per minute — Hit");
+  });
+
+  it("counts staying under the target as a hit when the celeration falls", () => {
+    const svg = renderChart({ corrects: [10, 8], timingSeconds, phases: [{ name: "Fewer", celeration: 0.5 }] });
+    expect(card(svg, "Day 0 · Correct")?.lines[3]).toContain("(÷2/week)");
+    expect(card(svg, "Day 0 · Correct")?.result).toBe("hit");
+  });
+
+  it("gives only the target until the next day is recorded, and none from zero", () => {
+    const svg = renderChart({ corrects: [0, 10], timingSeconds });
+    expect(card(svg, "Day 0 · Correct")?.lines).toEqual(["Day 0 · Correct", "0 per minute", "0 in a 1 minute timing"]);
+    const last = card(svg, "Day 1 · Correct");
+    expect(last?.lines).toHaveLength(4);
+    expect(last?.lines[3]).toMatch(/^Day 2 target/);
+    expect(last?.result).toBeUndefined();
+  });
+
+  it("gives an error its day, rate, count and timing", () => {
+    const svg = renderChart({ errors: [2, 0, 3], timingSeconds: [120, 60, 90] });
+    expect(card(svg, "Day 0 · Error")?.lines).toEqual(["Day 0 · Error", "1 per minute", "2 in a 2 minute timing"]);
+    expect(card(svg, "Day 1 · Error")?.lines).toEqual(["Day 1 · Error", "0 per minute", "0 in a 1 minute timing"]);
+    expect(card(svg, "Day 2 · Error")?.lines[2]).toBe("3 in a 90 second timing");
+  });
+
+  it("gives each line its celeration per week", () => {
+    const corrects = Array.from({ length: 15 }, (_, day) => 10 * 2 ** (day / 7));
+    const errors = Array.from({ length: 15 }, (_, day) => 4 / 2 ** (day / 7));
+    const svg = renderChart({
+      corrects,
+      errors,
+      timingSeconds,
+      phases: [{ name: "Practice", aim: 1000, celeration: 1.5 }],
+    });
+    expect(card(svg, "Learning line")?.lines).toEqual(["Learning line", "×1.5 per week"]);
+    expect(card(svg, "Correct best fit")?.lines).toEqual(["Correct best fit", "×2 per week"]);
+    expect(card(svg, "Error best fit")?.lines).toEqual(["Error best fit", "÷2 per week"]);
+  });
+
+  it("gives a record floor its day, rate and timing", () => {
+    const svg = renderChart({ timingSeconds: [60, 90, 600] });
+    expect(card(svg, "Day 0 · Record floor")?.lines).toEqual(["Day 0 · Record floor", "1 per minute", "1 minute timing"]);
+    expect(card(svg, "Day 1 · Record floor")?.lines).toEqual([
+      "Day 1 · Record floor",
+      ".667 per minute",
+      "90 second timing",
+    ]);
+    expect(card(svg, "Day 2 · Record floor")?.lines[2]).toBe("10 minute timing");
+  });
+
+  it("gives an aim star its day and rate", () => {
+    const svg = renderChart({ phases: [{ name: "Practice", endDay: 20, aim: 40 }, { name: "Next" }] });
+    expect(card(svg, "Day 20 · Aim")?.lines).toEqual(["Day 20 · Aim", "40 per minute"]);
+  });
+
+  it("puts an easier-to-point-at area with each mark and line", () => {
+    const svg = renderChart({ corrects: [10, 12], errors: [1, 1], timingSeconds });
+    expect(svg.match(/<g class="mark"[^>]*><circle class="correct"[^>]*\/><circle class="hover-area"/g)).toHaveLength(2);
+    expect(svg.match(/<g class="mark"[^>]*><path class="error"[^>]*\/><circle class="hover-area"/g)).toHaveLength(2);
+    expect(svg.match(/<g class="trend"[^>]*><path class="fit[^>]*\/><path class="hover-area"/g)).toHaveLength(2);
+    expect(svg.match(/<g class="mark"[^>]*><path class="floor"[^>]*\/><circle class="hover-area"/g)).toHaveLength(20);
+    const aimed = renderChart({ phases: [{ name: "Practice", aim: 40 }] });
+    expect(aimed).toMatch(/<g class="mark"[^>]*><path class="aim"[^>]*\/><circle class="hover-area"[^>]* r="3"/);
+  });
+});
