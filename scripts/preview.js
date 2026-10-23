@@ -1,5 +1,5 @@
 // Writes preview/index.html with the chart from the compiled build.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { renderChart } from "../dist/index.js";
 
 // Sample timings on weekdays only: 1 minute, then 2 minutes from day 28.
@@ -33,6 +33,12 @@ const phases = [
   { name: "Two minute timings", aim: 40, celeration: 1.25 },
 ];
 
+// The preview opens from disk, where modules cannot be imported, so the zoom
+// code is copied into the page as a plain script.
+const zoomScript = readFileSync(new URL("../dist/zoom.js", import.meta.url), "utf8")
+  .replace(/^export /gm, "")
+  .replace(/^\/\/# sourceMappingURL=.*$/m, "");
+
 const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -47,6 +53,10 @@ main { max-width: 1100px; }
 <main>
 ${renderChart({ corrects, errors, timingSeconds, phases })}
 </main>
+<script>
+${zoomScript}
+enableZoom(document.querySelector("main > svg"));
+</script>
 </body>
 </html>
 `;

@@ -600,3 +600,87 @@ describe("renderChart best fit lines", () => {
     expect(svg.lastIndexOf('<path class="fit')).toBeLessThan(svg.indexOf("<circle"));
   });
 });
+
+describe("renderChart zoom", () => {
+  const svg = renderChart();
+
+  it("draws the grid and marks in their own viewport, padded past the grid", () => {
+    const plot = svg.match(/<svg class="plot" x="(-[\d.]+)" y="(-[\d.]+)" width="([\d.]+)" height="([\d.]+)" viewBox="([^"]+)">/);
+    expect(plot).not.toBeNull();
+    const [, x, y, width, height, viewBox] = plot ?? [];
+    expect(viewBox).toBe(`${x} ${y} ${width} ${height}`);
+    expect(Number(width)).toBeGreaterThan(DAYS * DAY_WIDTH);
+    const inside = svg.slice(svg.indexOf('class="plot"'), svg.indexOf("</svg>"));
+    expect(inside).toContain('class="week"');
+    expect(inside).not.toContain("<text");
+  });
+
+  it("lays an unpainted area under the whole viewport for dragging to catch", () => {
+    const plot = svg.match(/<svg class="plot" (x="[^"]+" y="[^"]+" width="[^"]+" height="[^"]+")[^>]*>\n<rect class="plot-area" ([^/]+)\/>/);
+    expect(plot?.[2]).toBe(plot?.[1]);
+    expect(svg).toContain(".plot-area { fill: none; pointer-events: all; }");
+  });
+
+  describe("focus", () => {
+    const focusOf = (chart: string) => {
+      const match = chart.match(/data-focus="([^"]+)"/);
+      const [left = NaN, top = NaN, width = NaN, height = NaN] = match?.[1]?.split(" ").map(Number) ?? [];
+      return match ? { left, top, right: left + width, bottom: top + height } : undefined;
+    };
+    const dots = (chart: string) =>
+      [...chart.matchAll(/<circle class="correct" cx="([\d.]+)" cy="([\d.]+)"/g)].map((match) => ({
+        x: Number(match[1]),
+        y: Number(match[2]),
+      }));
+    const timings = (counts: readonly number[]) => counts.map(() => 60);
+
+    it("has nothing to focus on without marks", () => {
+      expect(focusOf(svg)).toBeUndefined();
+    });
+
+    it("takes in every mark without phases", () => {
+      const chart = renderChart({ corrects: [10, -1, 20, 30], timingSeconds: timings([10, -1, 20, 30]) });
+      const focus = focusOf(chart);
+      for (const dot of dots(chart)) {
+        expect(dot.x).toBeGreaterThan(focus?.left ?? NaN);
+        expect(dot.x).toBeLessThan(focus?.right ?? NaN);
+        expect(dot.y).toBeGreaterThan(focus?.top ?? NaN);
+        expect(dot.y).toBeLessThan(focus?.bottom ?? NaN);
+      }
+      expect(focus?.left).toBeGreaterThan(-DAY_WIDTH * 3);
+      expect(focus?.right).toBeLessThan(10 * DAY_WIDTH);
+    });
+
+    it("covers the phase holding the latest mark, from its phase line to its aim", () => {
+      const corrects = Array.from({ length: 20 }, (_, day) => (day < 15 ? 5 + day : -1));
+      const chart = renderChart({
+        corrects,
+        timingSeconds: timings(corrects.slice(0, 15)),
+        phases: [
+          { name: "A", endDay: 9 },
+          { name: "B", endDay: 12, aim: 500 },
+        ],
+      });
+      const focus = focusOf(chart);
+      const phaseX = Number(chart.match(/<path class="phase" d="M([\d.]+) /)?.[1]);
+      const star = chart.match(/<path class="aim" d="M([\d.]+) ([\d.]+)/);
+      expect(focus?.left).toBeLessThan(phaseX);
+      expect(focus?.left).toBeGreaterThan(phaseX - 10);
+      expect(focus?.right).toBeGreaterThan(Number(star?.[1]));
+      expect(focus?.top).toBeLessThan(Number(star?.[2]));
+    });
+  });
+
+  it("marks where each axis label's grid line is", () => {
+    expect(svg).toMatch(/<text class="y-label" data-y="0" x="-4" y="2">1000<\/text>/);
+    expect(svg).toMatch(/<text class="x-label" data-x="0" x="0" y="[\d.]+">0<\/text>/);
+  });
+
+  it("draws zoom buttons that stay hidden until enableZoom shows them", () => {
+    expect(svg).toContain('aria-label="Zoom in"');
+    expect(svg).toContain('aria-label="Zoom out"');
+    expect(svg).toContain(">1×</text>");
+    expect(svg).toContain(".zoom { display: none; }");
+    expect(svg).toContain(".zoomable .zoom { display: inline; }");
+  });
+});
