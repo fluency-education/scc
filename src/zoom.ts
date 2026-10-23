@@ -2,7 +2,7 @@
  * Zoom levels the chart steps through, from the whole chart up to the closest
  * look allowed.
  */
-export const ZOOM_STEPS = [1, 1.5, 2, 3, 4] as const;
+export const ZOOM_STEPS = [1, 1.5, 2] as const;
 
 /** A rectangle of the chart, in SVG units. */
 export interface View {
@@ -29,9 +29,21 @@ export function zoomView(frame: View, zoom: number, centre: { x: number; y: numb
 }
 
 /**
+ * The part of `frame` shown at `zoom` when looking at `focus`: centred on it,
+ * or when it is too wide to fit, showing its right end, where the latest days
+ * are. Stays inside the frame like zoomView.
+ */
+export function focusView(frame: View, zoom: number, focus: View): View {
+  const width = frame.width / zoom;
+  const x = focus.width <= width ? focus.x + focus.width / 2 : focus.x + focus.width - width / 2;
+  return zoomView(frame, zoom, { x, y: focus.y + focus.height / 2 });
+}
+
+/**
  * Makes a chart from `renderChart` zoomable: shows its zoom control, steps
  * through ZOOM_STEPS when the buttons are pressed, and pans when the zoomed
- * chart is dragged. The axis labels follow the grid. Returns a function that
+ * chart is dragged. Zooming looks at the current phase until the chart is
+ * dragged, then at the middle of what is on show. The axis labels follow the grid. Returns a function that
  * undoes it.
  */
 export function enableZoom(svg: SVGSVGElement): () => void {
@@ -51,9 +63,14 @@ export function enableZoom(svg: SVGSVGElement): () => void {
       return { label, at, offset: Number(label.getAttribute(axis)) - at };
     });
   const [xLabels, yLabels] = [labels("x"), labels("y")];
+  // The current phase, which renderChart leaves out when there are no marks.
+  const [fx = 0, fy = 0, fWidth = 0, fHeight = 0] = plot.dataset.focus?.split(" ").map(Number) ?? [];
+  const focus = plot.dataset.focus ? { x: fx, y: fy, width: fWidth, height: fHeight } : undefined;
 
   let step = 0;
   let view = frame;
+  // Whether the chart has been dragged since it was last zoomed all the way out.
+  let panned = false;
 
   const show = (next: View) => {
     view = next;
@@ -81,7 +98,9 @@ export function enableZoom(svg: SVGSVGElement): () => void {
     const next = Math.min(Math.max(step + change, 0), ZOOM_STEPS.length - 1);
     if (next === step) return;
     step = next;
-    show(zoomView(frame, ZOOM_STEPS[step] ?? 1, centre()));
+    if (step === 0) panned = false;
+    const zoom = ZOOM_STEPS[step] ?? 1;
+    show(focus && !panned ? focusView(frame, zoom, focus) : zoomView(frame, zoom, centre()));
   };
 
   const listeners: [EventTarget, string, (event: never) => void][] = [];
@@ -123,6 +142,7 @@ export function enableZoom(svg: SVGSVGElement): () => void {
     const dx = (event.clientX - drag.clientX) / pixelsPerUnit / zoom;
     const dy = (event.clientY - drag.clientY) / pixelsPerUnit / zoom;
     drag = { ...drag, clientX: event.clientX, clientY: event.clientY };
+    panned = true;
     const { x: cx, y: cy } = centre();
     show(zoomView(frame, ZOOM_STEPS[step] ?? 1, { x: cx - dx, y: cy - dy }));
   });
@@ -140,6 +160,7 @@ export function enableZoom(svg: SVGSVGElement): () => void {
   return () => {
     for (const [target, type, handler] of listeners) target.removeEventListener(type, handler as EventListener);
     step = 0;
+    panned = false;
     show(frame);
     svg.classList.remove("zoomable");
   };

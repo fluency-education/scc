@@ -30,6 +30,8 @@ const MARGIN = { top: 12, right: 12, bottom: 30, left: 38 };
  * stars on its edges are not clipped.
  */
 const PLOT_PADDING = 3;
+/** Room kept around the current phase when zooming in on it, in SVG units. */
+const FOCUS_PADDING = 6;
 /** Size of a zoom button, in SVG units. */
 const ZOOM_BUTTON = 7;
 
@@ -259,15 +261,24 @@ export function renderChart({
     height,
   );
 
+  const focus = currentPhaseBox(
+    spans,
+    [...correctPoints, ...errorPoints],
+    floorPoints,
+    aimPoints,
+    learning.flatMap((line) => (line ? [{ x: x(line.end), y: y(line.to) }] : [])),
+    x,
+  );
   // Grid and marks sit in their own viewport, which enableZoom zooms and pans.
   const plot = [-PLOT_PADDING, -PLOT_PADDING, width + 2 * PLOT_PADDING, zeroY + 2 * PLOT_PADDING].map(round);
+  const focusAttribute = focus ? ` data-focus="${[focus.left, focus.top, focus.right - focus.left, focus.bottom - focus.top].map(round).join(" ")}"` : "";
   const totalWidth = width + MARGIN.left + MARGIN.right;
   const totalHeight = zeroY + MARGIN.top + MARGIN.bottom;
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${round(totalWidth)} ${round(totalHeight)}" style="display: block; width: 100%; height: auto">`,
     `<style>${STYLE}</style>`,
     `<g transform="translate(${MARGIN.left} ${MARGIN.top})">`,
-    `<svg class="plot" x="${plot[0]}" y="${plot[1]}" width="${plot[2]}" height="${plot[3]}" viewBox="${plot.join(" ")}">`,
+    `<svg class="plot" x="${plot[0]}" y="${plot[1]}" width="${plot[2]}" height="${plot[3]}" viewBox="${plot.join(" ")}"${focusAttribute}>`,
     // Unpainted, but catches the pointer between the lines so a drag can start anywhere.
     `<rect class="plot-area" x="${plot[0]}" y="${plot[1]}" width="${plot[2]}" height="${plot[3]}"/>`,
     ...thinRows,
@@ -441,6 +452,36 @@ interface Box {
 }
 
 /**
+ * The part of the chart enableZoom zooms in on: the current phase, the one
+ * holding the latest correct or error (the last phase if that is past its end
+ * day), from its phase line to its last mark, aim or end of its learning line,
+ * with room around them. Without phases it takes in every mark. Without any
+ * corrects or errors there is nothing to zoom in on.
+ */
+function currentPhaseBox(
+  spans: readonly PhaseSpan[],
+  marks: readonly Point[],
+  floors: readonly Point[],
+  aims: readonly Point[],
+  lineEnds: readonly Point[],
+  x: (day: number) => number,
+): Box | undefined {
+  const latest = Math.max(...marks.map((mark) => mark.x));
+  if (!Number.isFinite(latest)) return undefined;
+  const span = spans.find(({ end }) => latest <= x(end + 0.5)) ?? spans.at(-1) ?? { start: 0, end: DAYS };
+  const [left, right] = [x(Math.max(span.start - 0.5, 0)), x(Math.min(span.end + 0.5, DAYS))];
+  const inside = [...marks, ...floors, ...aims, ...lineEnds].filter((point) => point.x >= left && point.x <= right);
+  const xs = inside.map((point) => point.x);
+  const ys = inside.map((point) => point.y);
+  return {
+    left: (spans.length > 0 ? left : Math.min(...xs)) - FOCUS_PADDING,
+    right: Math.max(...xs) + FOCUS_PADDING,
+    top: Math.min(...ys) - FOCUS_PADDING,
+    bottom: Math.max(...ys) + FOCUS_PADDING,
+  };
+}
+
+/**
  * Writes each phase name centred over its phase, as near the top of the chart
  * as it can go without covering a mark or another name. A name with nowhere
  * clear to go stays at the top.
@@ -543,7 +584,7 @@ function star({ x: cx, y: cy }: Point): string {
  */
 function zoomControl(right: number, top: number): string {
   const size = ZOOM_BUTTON;
-  const levelWidth = 12;
+  const levelWidth = 15;
   const button = (left: number, cls: string, label: string, glyph: string) => {
     const [cx, cy, arm] = [left + size / 2, top + size / 2, size / 4];
     const across = `M${round(cx - arm)} ${round(cy)}H${round(cx + arm)}`;

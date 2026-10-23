@@ -621,6 +621,56 @@ describe("renderChart zoom", () => {
     expect(svg).toContain(".plot-area { fill: none; pointer-events: all; }");
   });
 
+  describe("focus", () => {
+    const focusOf = (chart: string) => {
+      const match = chart.match(/data-focus="([^"]+)"/);
+      const [left = NaN, top = NaN, width = NaN, height = NaN] = match?.[1]?.split(" ").map(Number) ?? [];
+      return match ? { left, top, right: left + width, bottom: top + height } : undefined;
+    };
+    const dots = (chart: string) =>
+      [...chart.matchAll(/<circle class="correct" cx="([\d.]+)" cy="([\d.]+)"/g)].map((match) => ({
+        x: Number(match[1]),
+        y: Number(match[2]),
+      }));
+    const timings = (counts: readonly number[]) => counts.map(() => 60);
+
+    it("has nothing to focus on without marks", () => {
+      expect(focusOf(svg)).toBeUndefined();
+    });
+
+    it("takes in every mark without phases", () => {
+      const chart = renderChart({ corrects: [10, -1, 20, 30], timingSeconds: timings([10, -1, 20, 30]) });
+      const focus = focusOf(chart);
+      for (const dot of dots(chart)) {
+        expect(dot.x).toBeGreaterThan(focus?.left ?? NaN);
+        expect(dot.x).toBeLessThan(focus?.right ?? NaN);
+        expect(dot.y).toBeGreaterThan(focus?.top ?? NaN);
+        expect(dot.y).toBeLessThan(focus?.bottom ?? NaN);
+      }
+      expect(focus?.left).toBeGreaterThan(-DAY_WIDTH * 3);
+      expect(focus?.right).toBeLessThan(10 * DAY_WIDTH);
+    });
+
+    it("covers the phase holding the latest mark, from its phase line to its aim", () => {
+      const corrects = Array.from({ length: 20 }, (_, day) => (day < 15 ? 5 + day : -1));
+      const chart = renderChart({
+        corrects,
+        timingSeconds: timings(corrects.slice(0, 15)),
+        phases: [
+          { name: "A", endDay: 9 },
+          { name: "B", endDay: 12, aim: 500 },
+        ],
+      });
+      const focus = focusOf(chart);
+      const phaseX = Number(chart.match(/<path class="phase" d="M([\d.]+) /)?.[1]);
+      const star = chart.match(/<path class="aim" d="M([\d.]+) ([\d.]+)/);
+      expect(focus?.left).toBeLessThan(phaseX);
+      expect(focus?.left).toBeGreaterThan(phaseX - 10);
+      expect(focus?.right).toBeGreaterThan(Number(star?.[1]));
+      expect(focus?.top).toBeLessThan(Number(star?.[2]));
+    });
+  });
+
   it("marks where each axis label's grid line is", () => {
     expect(svg).toMatch(/<text class="y-label" data-y="0" x="-4" y="2">1000<\/text>/);
     expect(svg).toMatch(/<text class="x-label" data-x="0" x="0" y="[\d.]+">0<\/text>/);
