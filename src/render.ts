@@ -71,9 +71,17 @@ export interface Phase {
    * otherwise goes on the last day of the chart.
    */
   endDay?: number;
-  /** Target count per minute, drawn as a star on the phase's last day. */
+  /**
+   * Target count per minute, drawn as a star. With a `celeration`, the star goes
+   * on the first whole day the learning line reaches the aim; otherwise, or if
+   * the line never reaches it, on the phase's last day.
+   */
   aim?: number;
-  /** Target celeration for the phase. Not drawn yet. */
+  /**
+   * Target celeration per week, such as 2 for ×2 or 0.5 for ÷2. Drawn as a
+   * learning line from the phase's first correct, running until it reaches the
+   * aim, or to the end of the phase without one.
+   */
   celeration?: number;
 }
 
@@ -191,17 +199,37 @@ export function renderChart({
   const phaseLines = spans
     .slice(0, -1)
     .filter(({ end }) => end + 0.5 <= DAYS)
-    .map(({ end }) => `<path class="phase" d="M${round(x(end + 0.5))} 0V${round(zeroY)}"/>`);
-  const aimPoints = spans.flatMap(({ phase, end }) =>
-    phase.aim !== undefined && isPlottable(phase.aim) && end <= DAYS ? [{ x: x(end), y: y(phase.aim) }] : [],
+    // Like the week lines: down past .001, a gap, then a nub up from the zero line.
+    .map(({ end }) => {
+      const phaseX = round(x(end + 0.5));
+      return `<path class="phase" d="M${phaseX} 0V${round(weekTailY)}M${phaseX} ${round(nubY)}V${round(zeroY)}"/>`;
+    });
+  const learning = spans.map((span) => learningLine(span, correctFrequencies));
+  const learningLines = learning.flatMap((line) =>
+    line && line.end > line.start
+      ? [`<path class="learning" d="M${round(x(line.start))} ${round(y(line.from))}L${round(x(line.end))} ${round(y(line.to))}"/>`]
+      : [],
   );
+  // Points every day along each learning line, for phase names to keep clear of.
+  const learningPoints = learning.flatMap((line) =>
+    line
+      ? Array.from({ length: Math.floor(line.end - line.start) + 1 }, (_, step) => {
+          const day = line.start + step;
+          return { x: x(day), y: y(line.from * line.celeration ** (step / 7)) };
+        })
+      : [],
+  );
+  const aimPoints = spans.flatMap(({ phase, end }, index) => {
+    const day = learning[index]?.aimDay ?? end;
+    return phase.aim !== undefined && isPlottable(phase.aim) && day <= DAYS ? [{ x: x(day), y: y(phase.aim) }] : [];
+  });
   const phaseNames = placePhaseNames(
     spans.map(({ phase, start, end }) => ({
       name: phase.name,
       left: x(Math.max(start - 0.5, 0)),
       right: x(Math.min(end + 0.5, DAYS)),
     })),
-    [...floorPoints, ...correctPoints, ...errorPoints],
+    [...floorPoints, ...correctPoints, ...errorPoints, ...learningPoints],
     aimPoints,
     width,
     height,
@@ -218,6 +246,7 @@ export function renderChart({
     ...thickRows,
     ...thickColumns,
     ...phaseLines,
+    ...learningLines,
     ...floorPoints.map(dash),
     ...aimPoints.map(star),
     ...correctPoints.map(dot),
@@ -244,6 +273,7 @@ text { font-family: system-ui, sans-serif; fill: #1f5f8b; }
 .half-label { font-size: 4.5px; opacity: 0.8; }
 .title { font-size: 6.5px; text-anchor: middle; }
 .phase { stroke: #111; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.learning { stroke: #111; stroke-width: 1.25; fill: none; vector-effect: non-scaling-stroke; }
 .aim { fill: #ffd60a; stroke: #1f5f8b; stroke-width: 1; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .phase-name { font-size: ${PHASE_FONT_SIZE}px; text-anchor: middle; fill: #111; paint-order: stroke; stroke: #fff; stroke-width: 1.5px; stroke-linejoin: round; }
 `;
@@ -275,6 +305,46 @@ function phaseSpans(phases: readonly Phase[]): PhaseSpan[] {
     start = end + 1;
     return span;
   });
+}
+
+interface LearningLine {
+  /** Days the line runs between, and the frequencies at each end. */
+  start: number;
+  end: number;
+  from: number;
+  to: number;
+  celeration: number;
+  /** First whole day the line reaches the aim, if it does. */
+  aimDay: number | undefined;
+}
+
+/**
+ * A phase's learning line: from its first correct above zero, changing by its
+ * celeration each week until it reaches the aim. Without an aim the line runs
+ * to the end of the phase. It stops at the edges of the chart.
+ */
+function learningLine({ phase, start, end }: PhaseSpan, corrects: readonly number[]): LearningLine | undefined {
+  const { aim, celeration } = phase;
+  if (celeration === undefined || !(celeration > 0)) return undefined;
+  const first = corrects.findIndex(
+    (frequency, day) => day >= start && day <= Math.min(end, DAYS) && frequency > 0 && isPlottable(frequency),
+  );
+  const from = corrects[first];
+  if (from === undefined) return undefined;
+  const daysTo = (frequency: number) => (7 * Math.log(frequency / from)) / Math.log(celeration);
+  const toAim = aim !== undefined && isPlottable(aim) ? daysTo(aim) : NaN;
+  const reachesAim = Number.isFinite(toAim) && toAim >= 0;
+  const toEdge = celeration === 1 ? Infinity : daysTo(celeration > 1 ? MAX_FREQUENCY : MIN_FREQUENCY);
+  const lineEnd = Math.min(reachesAim ? first + toAim : end, first + toEdge, DAYS);
+  return {
+    start: first,
+    end: lineEnd,
+    from,
+    to: from * celeration ** ((lineEnd - first) / 7),
+    celeration,
+    // Allow for rounding error so an aim met on a whole day stays on that day.
+    aimDay: reachesAim ? Math.ceil(first + toAim - 1e-9) : undefined,
+  };
 }
 
 interface Box {

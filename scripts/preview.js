@@ -26,11 +26,11 @@ const errors = timingSeconds.map((seconds, day) =>
         : Math.max(0, Math.round((6 * 0.8 ** (day / 7) - ((day * 13) % 3)) * minutes(day))),
 );
 
-// Sample phases: a baseline week, then practice towards an aim.
+// Sample phases: a baseline week, then practice towards an aim at ×1.25 per week.
 const phases = [
   { name: "Baseline", endDay: 6 },
-  { name: "Practice", endDay: 34, aim: 20, celeration: 2 },
-  { name: "Two minute timings", aim: 25, celeration: 1.5 },
+  { name: "Practice", endDay: 34, aim: 20, celeration: 1.25 },
+  { name: "Two minute timings", aim: 40, celeration: 1.25 },
 ];
 
 const html = `<!doctype html>
