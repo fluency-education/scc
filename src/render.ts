@@ -25,6 +25,13 @@ const BELOW_FLOOR = [0.0009, 0.0008, 0.0007];
 export const DAY_WIDTH = 3;
 
 const MARGIN = { top: 12, right: 12, bottom: 30, left: 38 };
+/**
+ * How far the zoomable plot reaches past the grid on each side, so lines and
+ * stars on its edges are not clipped.
+ */
+const PLOT_PADDING = 3;
+/** Size of a zoom button, in SVG units. */
+const ZOOM_BUTTON = 7;
 
 /** Grid height that keeps the standard celeration angle for a given width. */
 export function chartHeight(width: number): number {
@@ -111,7 +118,8 @@ export interface ChartOptions {
 
 /**
  * Renders a daily per-minute Standard Celeration Chart as an SVG string.
- * The SVG fills the width of its container and keeps its proportions.
+ * The SVG fills the width of its container and keeps its proportions. Its zoom
+ * control stays hidden until the chart is passed to enableZoom.
  */
 export function renderChart({
   corrects = [],
@@ -139,20 +147,20 @@ export function renderChart({
   for (let power = LOWEST_POWER; power <= HIGHEST_POWER; power++) {
     const decade = 10 ** power;
     thickRows.push(line(0, y(decade), width, y(decade), "decade"));
-    parts.push(text(-4, y(decade) + 2, formatFrequency(decade), "y-label"));
+    parts.push(text(-4, y(decade) + 2, formatFrequency(decade), "y-label", { y: y(decade) }));
     if (power === HIGHEST_POWER) break;
     for (let n = 2; n <= 9; n++) {
       const row = line(0, y(n * decade), width, y(n * decade), n === 5 ? "half" : "unit");
       (n === 5 ? thickRows : thinRows).push(row);
     }
     const half = 5 * decade;
-    parts.push(text(-4, y(half) + 1.5, formatFrequency(half), "y-label half-label"));
+    parts.push(text(-4, y(half) + 1.5, formatFrequency(half), "y-label half-label", { y: y(half) }));
   }
   for (const frequency of BELOW_FLOOR) {
     thinRows.push(line(0, y(frequency), width, y(frequency), "unit"));
   }
   thickRows.push(line(0, zeroY, width, zeroY, "zero"));
-  parts.push(text(-4, zeroY + 2, "0", "y-label"));
+  parts.push(text(-4, zeroY + 2, "0", "y-label", { y: zeroY }));
 
   for (let day = 0; day <= DAYS; day++) {
     if (day % 7 === 0) {
@@ -164,7 +172,7 @@ export function renderChart({
     }
   }
   for (let day = 0; day <= DAYS; day += 14) {
-    parts.push(text(x(day), zeroY + 9, String(day), "x-label"));
+    parts.push(text(x(day), zeroY + 9, String(day), "x-label", { x: x(day) }));
   }
 
   parts.push(text(width / 2, zeroY + 21, "Successive calendar days", "title"));
@@ -251,12 +259,17 @@ export function renderChart({
     height,
   );
 
+  // Grid and marks sit in their own viewport, which enableZoom zooms and pans.
+  const plot = [-PLOT_PADDING, -PLOT_PADDING, width + 2 * PLOT_PADDING, zeroY + 2 * PLOT_PADDING].map(round);
   const totalWidth = width + MARGIN.left + MARGIN.right;
   const totalHeight = zeroY + MARGIN.top + MARGIN.bottom;
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${round(totalWidth)} ${round(totalHeight)}" style="display: block; width: 100%; height: auto">`,
     `<style>${STYLE}</style>`,
     `<g transform="translate(${MARGIN.left} ${MARGIN.top})">`,
+    `<svg class="plot" x="${plot[0]}" y="${plot[1]}" width="${plot[2]}" height="${plot[3]}" viewBox="${plot.join(" ")}">`,
+    // Unpainted, but catches the pointer between the lines so a drag can start anywhere.
+    `<rect class="plot-area" x="${plot[0]}" y="${plot[1]}" width="${plot[2]}" height="${plot[3]}"/>`,
     ...thinRows,
     ...thinColumns,
     ...thickRows,
@@ -270,7 +283,9 @@ export function renderChart({
     ...correctPoints.map(dot),
     ...errorPoints.map(cross),
     ...phaseNames,
+    `</svg>`,
     ...parts,
+    zoomControl(width, zeroY + 15),
     `</g>`,
     `</svg>`,
   ].join("\n");
@@ -296,6 +311,19 @@ text { font-family: system-ui, sans-serif; fill: #1f5f8b; }
 .correct-fit { stroke: #111; }
 .error-fit { stroke: #d62828; }
 .aim { fill: #ffd60a; stroke: #1f5f8b; stroke-width: 1; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.zoom { display: none; }
+.zoomable .zoom { display: inline; }
+.zoom-button { cursor: pointer; }
+.zoom-button rect { fill: #fff; stroke: #4a9fd8; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.zoom-button path { stroke: #1f5f8b; stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.zoom-button:hover rect, .zoom-button:focus-visible rect { fill: #e8f3fb; }
+.zoom-button:focus { outline: none; }
+.zoom-button:focus-visible rect { stroke: #1f5f8b; stroke-width: 2; }
+.zoom-button.disabled { cursor: default; opacity: 0.35; }
+.zoom-level { font-size: 5px; text-anchor: middle; }
+.plot-area { fill: none; pointer-events: all; }
+.plot.zoomed { cursor: grab; touch-action: none; user-select: none; }
+.plot.dragging { cursor: grabbing; }
 .phase-name { font-size: ${PHASE_FONT_SIZE}px; text-anchor: middle; fill: #111; paint-order: stroke; stroke: #fff; stroke-width: 1.5px; stroke-linejoin: round; }
 `;
 
@@ -509,12 +537,43 @@ function star({ x: cx, y: cy }: Point): string {
   return `<path class="aim" d="M${corners.join("L")}Z"/>`;
 }
 
+/**
+ * Zoom out and zoom in buttons with the zoom level between them, ending at
+ * `right` with their tops at `top`. Hidden until enableZoom makes them work.
+ */
+function zoomControl(right: number, top: number): string {
+  const size = ZOOM_BUTTON;
+  const levelWidth = 12;
+  const button = (left: number, cls: string, label: string, glyph: string) => {
+    const [cx, cy, arm] = [left + size / 2, top + size / 2, size / 4];
+    const across = `M${round(cx - arm)} ${round(cy)}H${round(cx + arm)}`;
+    const d = glyph === "+" ? `${across}M${round(cx)} ${round(cy - arm)}V${round(cy + arm)}` : across;
+    return [
+      `<g class="zoom-button ${cls}" role="button" tabindex="0" aria-label="${label}">`,
+      `<rect x="${round(left)}" y="${round(top)}" width="${size}" height="${size}" rx="1.5"/>`,
+      `<path d="${d}"/>`,
+      `</g>`,
+    ].join("");
+  };
+  const zoomInLeft = right - size;
+  const zoomOutLeft = zoomInLeft - levelWidth - size;
+  return [
+    `<g class="zoom">`,
+    button(zoomOutLeft, "zoom-out disabled", "Zoom out", "-"),
+    text(zoomOutLeft + size + levelWidth / 2, top + size / 2 + 1.75, "1×", "zoom-level"),
+    button(zoomInLeft, "zoom-in", "Zoom in", "+"),
+    `</g>`,
+  ].join("\n");
+}
+
 function line(x1: number, y1: number, x2: number, y2: number, cls: string): string {
   return `<line class="${cls}" x1="${round(x1)}" y1="${round(y1)}" x2="${round(x2)}" y2="${round(y2)}"/>`;
 }
 
-function text(x: number, y: number, content: string, cls: string): string {
-  return `<text class="${cls}" x="${round(x)}" y="${round(y)}">${content}</text>`;
+/** `data` records where an axis label's grid line is, for enableZoom to move it with the grid. */
+function text(x: number, y: number, content: string, cls: string, data: { x?: number; y?: number } = {}): string {
+  const attributes = Object.entries(data).map(([axis, at]) => ` data-${axis}="${round(at)}"`);
+  return `<text class="${cls}"${attributes.join("")} x="${round(x)}" y="${round(y)}">${content}</text>`;
 }
 
 function escapeXml(value: string): string {

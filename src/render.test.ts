@@ -600,3 +600,37 @@ describe("renderChart best fit lines", () => {
     expect(svg.lastIndexOf('<path class="fit')).toBeLessThan(svg.indexOf("<circle"));
   });
 });
+
+describe("renderChart zoom", () => {
+  const svg = renderChart();
+
+  it("draws the grid and marks in their own viewport, padded past the grid", () => {
+    const plot = svg.match(/<svg class="plot" x="(-[\d.]+)" y="(-[\d.]+)" width="([\d.]+)" height="([\d.]+)" viewBox="([^"]+)">/);
+    expect(plot).not.toBeNull();
+    const [, x, y, width, height, viewBox] = plot ?? [];
+    expect(viewBox).toBe(`${x} ${y} ${width} ${height}`);
+    expect(Number(width)).toBeGreaterThan(DAYS * DAY_WIDTH);
+    const inside = svg.slice(svg.indexOf('class="plot"'), svg.indexOf("</svg>"));
+    expect(inside).toContain('class="week"');
+    expect(inside).not.toContain("<text");
+  });
+
+  it("lays an unpainted area under the whole viewport for dragging to catch", () => {
+    const plot = svg.match(/<svg class="plot" (x="[^"]+" y="[^"]+" width="[^"]+" height="[^"]+")[^>]*>\n<rect class="plot-area" ([^/]+)\/>/);
+    expect(plot?.[2]).toBe(plot?.[1]);
+    expect(svg).toContain(".plot-area { fill: none; pointer-events: all; }");
+  });
+
+  it("marks where each axis label's grid line is", () => {
+    expect(svg).toMatch(/<text class="y-label" data-y="0" x="-4" y="2">1000<\/text>/);
+    expect(svg).toMatch(/<text class="x-label" data-x="0" x="0" y="[\d.]+">0<\/text>/);
+  });
+
+  it("draws zoom buttons that stay hidden until enableZoom shows them", () => {
+    expect(svg).toContain('aria-label="Zoom in"');
+    expect(svg).toContain('aria-label="Zoom out"');
+    expect(svg).toContain(">1×</text>");
+    expect(svg).toContain(".zoom { display: none; }");
+    expect(svg).toContain(".zoomable .zoom { display: inline; }");
+  });
+});
