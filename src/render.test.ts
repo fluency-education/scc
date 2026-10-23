@@ -272,11 +272,15 @@ describe("renderChart record floors", () => {
 
 describe("renderChart phases", () => {
   const phaseLinesIn = (svg: string) =>
-    [...svg.matchAll(/<path class="phase" d="M([\d.]+) ([\d.]+)V([\d.]+)"/g)].map((match) => ({
-      x: Number(match[1]),
-      top: Number(match[2]),
-      bottom: Number(match[3]),
-    }));
+    [...svg.matchAll(/<path class="phase" d="M([\d.]+) ([\d.]+)V([\d.]+)M[\d.]+ ([\d.]+)V([\d.]+)"/g)].map(
+      (match) => ({
+        x: Number(match[1]),
+        top: Number(match[2]),
+        tail: Number(match[3]),
+        nub: Number(match[4]),
+        bottom: Number(match[5]),
+      }),
+    );
   const namesIn = (svg: string) =>
     [...svg.matchAll(/<text class="phase-name" x="([\d.]+)" y="([\d.]+)">([^<]*)<\/text>/g)].map((match) => ({
       x: Number(match[1]),
@@ -296,14 +300,21 @@ describe("renderChart phases", () => {
     expect(phaseLinesIn(renderChart({ phases: [{ name: "Baseline", endDay: 10 }] }))).toEqual([]);
   });
 
-  it("draws a line between each phase and the next, from the top of the chart to the zero line", () => {
+  it("draws a line between each phase and the next, from the top of the chart to the zero line, with the week lines' gap", () => {
     const svg = renderChart({
       phases: [{ name: "Baseline", endDay: 6 }, { name: "Practice", endDay: 20 }, { name: "Review" }],
     });
     const lines = phaseLinesIn(svg);
+    const column = (cls: string) => {
+      const match = svg.match(new RegExp(`class="${cls}" x1="0" y1="([\\d.]+)" x2="0" y2="([\\d.]+)"`));
+      return { top: Number(match?.[1]), bottom: Number(match?.[2]) };
+    };
+    const [weekLine, weekNub] = [column("week"), column("week nub")];
     expect(lines.map((line) => line.x)).toEqual([6.5 * DAY_WIDTH, 20.5 * DAY_WIDTH]);
     for (const line of lines) {
       expect(line.top).toBe(0);
+      expect(line.tail).toBe(weekLine?.bottom);
+      expect(line.nub).toBe(weekNub?.top);
       expect(line.bottom).toBe(zeroY(svg));
     }
   });
@@ -385,5 +396,113 @@ describe("renderChart phases", () => {
   it("skips aims off the chart", () => {
     const svg = renderChart({ phases: [{ name: "A", endDay: 10, aim: 2000 }, { name: "B", aim: 0 }] });
     expect(starsIn(svg)).toEqual([]);
+  });
+});
+
+describe("renderChart learning lines", () => {
+  const linesIn = (svg: string) =>
+    [...svg.matchAll(/<path class="learning" d="M([\d.]+) ([\d.]+)L([\d.]+) ([\d.]+)"/g)].map((match) => ({
+      x1: Number(match[1]),
+      y1: Number(match[2]),
+      x2: Number(match[3]),
+      y2: Number(match[4]),
+    }));
+  const starsIn = (svg: string) =>
+    [...svg.matchAll(/<path class="aim" d="M([\d.]+) ([\d.]+)L/g)].map((match) => ({
+      x: Number(match[1]),
+      y: Number(match[2]) + 3,
+    }));
+  const labelY = (svg: string, label: string) => Number(svg.match(new RegExp(`y="([\\d.]+)">${label}</text>`))?.[1]);
+  const timingSeconds = Array<number>(DAYS + 1).fill(60);
+
+  it("runs from the first correct at the celeration until it reaches the aim", () => {
+    // ×2 a week from 10 reaches 40 in two weeks.
+    const svg = renderChart({ corrects: [-1, 10, 12], timingSeconds, phases: [{ name: "A", aim: 40, celeration: 2 }] });
+    const [line] = linesIn(svg);
+    const [star] = starsIn(svg);
+    expect(line?.x1).toBeCloseTo(DAY_WIDTH);
+    expect(line?.y1).toBeCloseTo(labelY(svg, "10") - 2);
+    expect(line?.x2).toBeCloseTo(15 * DAY_WIDTH);
+    expect(star?.x).toBeCloseTo(15 * DAY_WIDTH);
+    expect(line?.y2).toBeCloseTo(star?.y ?? NaN, 1);
+  });
+
+  it("puts the star on the next whole day when the aim is reached part way through one", () => {
+    // ×2 a week from 10 reaches 30 after 7 × log2(3) ≈ 11.09 days, on day 12.09.
+    const svg = renderChart({ corrects: [-1, 10], timingSeconds, phases: [{ name: "A", aim: 30, celeration: 2 }] });
+    const [line] = linesIn(svg);
+    const [star] = starsIn(svg);
+    expect(line?.x2).toBeCloseTo((1 + 7 * Math.log2(3)) * DAY_WIDTH, 1);
+    expect(star?.x).toBeCloseTo(13 * DAY_WIDTH);
+    expect(star?.y).toBeCloseTo(line?.y2 ?? NaN, 1);
+  });
+
+  it("falls when the celeration is below one", () => {
+    const svg = renderChart({ corrects: [8], timingSeconds, phases: [{ name: "A", aim: 2, celeration: 0.5 }] });
+    const [line] = linesIn(svg);
+    expect(line?.x2).toBeCloseTo(14 * DAY_WIDTH);
+    expect(line?.y2).toBeGreaterThan(line?.y1 ?? NaN);
+    expect(starsIn(svg)[0]?.x).toBeCloseTo(14 * DAY_WIDTH);
+  });
+
+  it("starts each phase's line at that phase's first correct above zero", () => {
+    const corrects = [5, -1, -1, -1, -1, -1, -1, 0, -1, 10];
+    const svg = renderChart({
+      corrects,
+      timingSeconds,
+      phases: [{ name: "A", endDay: 6 }, { name: "B", aim: 20, celeration: 2 }],
+    });
+    const lines = linesIn(svg);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]?.x1).toBeCloseTo(9 * DAY_WIDTH);
+    expect(lines[0]?.y1).toBeCloseTo(labelY(svg, "10") - 2);
+  });
+
+  it("runs to the end of the phase without an aim", () => {
+    const svg = renderChart({
+      corrects: [10],
+      timingSeconds,
+      phases: [{ name: "A", endDay: 14, celeration: 2 }, { name: "B" }],
+    });
+    const [line] = linesIn(svg);
+    expect(line?.x2).toBeCloseTo(14 * DAY_WIDTH);
+    // Two weeks at ×2 is ×4, log10(4) of a cycle higher.
+    expect((line?.y1 ?? NaN) - (line?.y2 ?? NaN)).toBeCloseTo((labelY(svg, "1") - labelY(svg, "10")) * Math.log10(4), 1);
+  });
+
+  it("runs to the end of the phase and keeps the star there when the line never reaches the aim", () => {
+    const svg = renderChart({
+      corrects: [10],
+      timingSeconds,
+      phases: [{ name: "A", endDay: 20, aim: 5, celeration: 2 }, { name: "B" }],
+    });
+    expect(linesIn(svg)[0]?.x2).toBeCloseTo(20 * DAY_WIDTH);
+    expect(starsIn(svg)[0]?.x).toBeCloseTo(20 * DAY_WIDTH);
+  });
+
+  it("stops at the top of the chart", () => {
+    const svg = renderChart({ corrects: [500], timingSeconds, phases: [{ name: "A", celeration: 2 }] });
+    const [line] = linesIn(svg);
+    expect(line?.x2).toBeCloseTo(7 * DAY_WIDTH);
+    expect(line?.y2).toBeCloseTo(0);
+  });
+
+  it("is not drawn without a celeration or a correct in the phase", () => {
+    expect(linesIn(renderChart({ corrects: [10], timingSeconds, phases: [{ name: "A", aim: 20 }] }))).toEqual([]);
+    const svg = renderChart({
+      corrects: [10],
+      timingSeconds,
+      phases: [{ name: "A", endDay: 0 }, { name: "B", endDay: 30, aim: 20, celeration: 2 }, { name: "C" }],
+    });
+    expect(linesIn(svg)).toEqual([]);
+    expect(starsIn(svg)[0]?.x).toBeCloseTo(30 * DAY_WIDTH);
+  });
+
+  it("draws the line over the grid and under the marks", () => {
+    const svg = renderChart({ corrects: [10], timingSeconds, phases: [{ name: "A", aim: 20, celeration: 2 }] });
+    const learning = svg.indexOf('<path class="learning"');
+    expect(learning).toBeGreaterThan(svg.lastIndexOf("<line"));
+    expect(learning).toBeLessThan(svg.indexOf('<path class="aim"'));
+    expect(learning).toBeLessThan(svg.indexOf("<circle"));
   });
 });
