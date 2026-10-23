@@ -1,3 +1,4 @@
+import { type CalendarDate, dayToDate, daysSinceSunday, formatAxisDate, formatCardDate } from "./dates.js";
 import { DAYS, MAX_FREQUENCY, MIN_FREQUENCY, dayScale, frequencyScale, toFrequency } from "./scale.js";
 
 /** Angle at which a ×2 per week celeration line rises on a standard chart. */
@@ -120,6 +121,14 @@ export interface ChartOptions {
   timingSeconds?: readonly number[];
   /** Consecutive phases of the chart, starting at day 0. */
   phases?: readonly Phase[];
+  /**
+   * The date of day 0. With it, the x-axis and cards show dates instead of day
+   * numbers, and the x-axis title gives the year or years the chart covers.
+   * The chart starts on the Sunday on or before it, so weeks run Sunday to
+   * Saturday; counts, timings and phase end days still count from it, and the
+   * days before it are left empty.
+   */
+  startDate?: CalendarDate;
 }
 
 /**
@@ -128,12 +137,25 @@ export interface ChartOptions {
  * control stays hidden until the chart is passed to enableZoom, and its marks
  * and lines show their details on hover once it is passed to enableHover.
  */
-export function renderChart({
-  corrects = [],
-  errors = [],
-  timingSeconds = [],
-  phases = [],
-}: ChartOptions = {}): string {
+export function renderChart({ phases = [], startDate, ...counts }: ChartOptions = {}): string {
+  // A dated chart starts on the Sunday on or before the start date, leaving the
+  // days between unrecorded. Counts, timings and end days still count from the
+  // start date; everything below counts from the chart's first day.
+  const offset = startDate === undefined ? 0 : daysSinceSunday(startDate);
+  const unrecorded = Array<number>(offset).fill(-1);
+  const corrects = [...unrecorded, ...(counts.corrects ?? [])];
+  const errors = [...unrecorded, ...(counts.errors ?? [])];
+  const timingSeconds = [...unrecorded, ...(counts.timingSeconds ?? [])];
+  const dateOf = (day: number) => (startDate === undefined ? undefined : dayToDate(startDate, day - offset));
+  /** How the x-axis and cards name a day: its date, or its number without a start date. */
+  const axisDay = (day: number) => {
+    const date = dateOf(day);
+    return date ? formatAxisDate(date) : String(day);
+  };
+  const cardDay = (day: number) => {
+    const date = dateOf(day);
+    return date ? formatCardDate(date) : `Day ${day}`;
+  };
   const width = DAYS * DAY_WIDTH;
   const height = chartHeight(width);
   const x = dayScale({ left: 0, right: width });
@@ -179,10 +201,14 @@ export function renderChart({
     }
   }
   for (let day = 0; day <= DAYS; day += 14) {
-    parts.push(text(x(day), zeroY + 9, String(day), "x-label", { x: x(day) }));
+    parts.push(text(x(day), zeroY + 9, axisDay(day), "x-label", { x: x(day) }));
   }
 
-  parts.push(text(width / 2, zeroY + 21, "Successive calendar days", "title"));
+  const [firstYear, lastYear] = [dateOf(0)?.getUTCFullYear(), dateOf(DAYS)?.getUTCFullYear()];
+  const years = firstYear === lastYear ? `${firstYear}` : `${firstYear}–${lastYear}`;
+  parts.push(
+    text(width / 2, zeroY + 21, `Successive calendar days${startDate === undefined ? "" : ` · ${years}`}`, "title"),
+  );
   parts.push(
     `<text class="title" transform="translate(-28 ${round(height / 2)}) rotate(-90)">Count per minute</text>`,
   );
@@ -211,7 +237,7 @@ export function renderChart({
   const correctPoints = points(correctFrequencies, -1);
   const errorPoints = points(errorFrequencies, 1);
 
-  const spans = phaseSpans(phases);
+  const spans = phaseSpans(phases, offset);
   const phaseLines = spans
     .slice(0, -1)
     .filter(({ end }) => end + 0.5 <= DAYS)
@@ -252,29 +278,29 @@ export function renderChart({
    * hit the target: reaching it, or for a falling celeration, staying under it.
    */
   const correctCard = ({ day, frequency }: Mark) => {
-    const lines = [`Day ${day} · Correct`, `${formatRate(frequency)} per minute`, counted(corrects, day)];
+    const lines = [`${cardDay(day)} · Correct`, `${formatRate(frequency)} per minute`, counted(corrects, day)];
     if (frequency === 0) return cardAttributes(lines);
     const celeration = spans.find(({ start, end }) => day >= start && day <= end)?.phase.celeration ?? DEFAULT_CELERATION;
     const recorded = correctFrequencies.findIndex((next, nextDay) => nextDay > day && next >= 0);
     const nextDay = recorded === -1 ? day + 1 : recorded;
     const target = frequency * celeration ** ((nextDay - day) / 7);
-    lines.push(`Day ${nextDay} target (${formatCeleration(celeration)}/week): ${formatRate(target)}`);
+    lines.push(`${cardDay(nextDay)} target (${formatCeleration(celeration)}/week): ${formatRate(target)}`);
     const next = correctFrequencies[recorded];
     if (next === undefined) return cardAttributes(lines);
     const hit = celeration >= 1 ? next >= target * (1 - 1e-9) : next <= target * (1 + 1e-9);
-    lines.push(`Day ${nextDay}: ${formatRate(next)} per minute — ${hit ? "Hit" : "Miss"}`);
+    lines.push(`${cardDay(nextDay)}: ${formatRate(next)} per minute — ${hit ? "Hit" : "Miss"}`);
     return cardAttributes(lines, hit ? "hit" : "miss");
   };
   const errorCard = ({ day, frequency }: Mark) =>
-    cardAttributes([`Day ${day} · Error`, `${formatRate(frequency)} per minute`, counted(errors, day)]);
+    cardAttributes([`${cardDay(day)} · Error`, `${formatRate(frequency)} per minute`, counted(errors, day)]);
   const floorCard = ({ day, frequency }: Mark) =>
     cardAttributes([
-      `Day ${day} · Record floor`,
+      `${cardDay(day)} · Record floor`,
       `${formatRate(frequency)} per minute`,
       `${formatTiming(timingSeconds[day] ?? 0)} timing`,
     ]);
   const aimCard = ({ day, frequency }: Mark) =>
-    cardAttributes([`Day ${day} · Aim`, `${formatRate(frequency)} per minute`]);
+    cardAttributes([`${cardDay(day)} · Aim`, `${formatRate(frequency)} per minute`]);
   // Points every day along a trend, for phase names to keep clear of.
   const trendPoints = (trend: Trend) =>
     Array.from({ length: Math.floor(trend.end - trend.start) + 1 }, (_, step) => ({
@@ -410,18 +436,22 @@ interface PhaseSpan {
   end: number;
 }
 
-/** The days each phase covers, checking that the phases run in order. */
-function phaseSpans(phases: readonly Phase[]): PhaseSpan[] {
+/**
+ * The days of the chart each phase covers, checking that the phases run in
+ * order. End days count from `offset` days into the chart, where the first
+ * phase starts; the last phase runs to the end of the chart without one.
+ */
+function phaseSpans(phases: readonly Phase[], offset: number): PhaseSpan[] {
   let start = 0;
   return phases.map((phase, index) => {
     const isLast = index === phases.length - 1;
-    const end = phase.endDay ?? DAYS;
+    const end = phase.endDay ?? DAYS - offset;
     if (!isLast && !(Number.isFinite(phase.endDay) && end >= start)) {
       throw new RangeError(
         `Phase "${phase.name}" needs an endDay on or after day ${start}, got ${phase.endDay}`,
       );
     }
-    const span = { phase, start, end };
+    const span = { phase, start: start + offset, end: end + offset };
     start = end + 1;
     return span;
   });
