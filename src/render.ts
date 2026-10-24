@@ -165,39 +165,45 @@ export function renderChart({ phases = [], startDate, ...counts }: ChartOptions 
   const floorY = y(Math.min(...BELOW_FLOOR));
   const weekTailY = height + cycle * WEEK_TAIL;
   const nubY = zeroY - cycle * NUB;
-  // Each layer is drawn over the one before, so thick lines are never
-  // broken up by the thin lines that cross them.
-  const thinRows: string[] = [];
-  const thinColumns: string[] = [];
-  const thickRows: string[] = [];
-  const thickColumns: string[] = [];
+  // Each kind of grid line is one path, as hundreds of separate lines would
+  // each be redrawn whenever the chart zooms or pans. The paths are drawn in
+  // this order, so thick lines are never broken up by the thin lines that
+  // cross them: thin rows, thin columns, thick rows, then thick columns.
+  const grid = {
+    unit: [] as string[],
+    day: [] as string[],
+    "day nub": [] as string[],
+    decade: [] as string[],
+    half: [] as string[],
+    zero: [] as string[],
+    week: [] as string[],
+    "week nub": [] as string[],
+  };
+  const row = (cls: keyof typeof grid, rowY: number) => grid[cls].push(`M0 ${round(rowY)}H${round(width)}`);
+  const column = (cls: keyof typeof grid, columnX: number, top: number, bottom: number) =>
+    grid[cls].push(`M${round(columnX)} ${round(top)}V${round(bottom)}`);
   const parts: string[] = [];
 
   for (let power = LOWEST_POWER; power <= HIGHEST_POWER; power++) {
     const decade = 10 ** power;
-    thickRows.push(line(0, y(decade), width, y(decade), "decade"));
+    row("decade", y(decade));
     parts.push(text(-4, y(decade) + 2, formatFrequency(decade), "y-label", { y: y(decade) }));
     if (power === HIGHEST_POWER) break;
-    for (let n = 2; n <= 9; n++) {
-      const row = line(0, y(n * decade), width, y(n * decade), n === 5 ? "half" : "unit");
-      (n === 5 ? thickRows : thinRows).push(row);
-    }
+    for (let n = 2; n <= 9; n++) row(n === 5 ? "half" : "unit", y(n * decade));
     const half = 5 * decade;
     parts.push(text(-4, y(half) + 1.5, formatFrequency(half), "y-label half-label", { y: y(half) }));
   }
-  for (const frequency of BELOW_FLOOR) {
-    thinRows.push(line(0, y(frequency), width, y(frequency), "unit"));
-  }
-  thickRows.push(line(0, zeroY, width, zeroY, "zero"));
+  for (const frequency of BELOW_FLOOR) row("unit", y(frequency));
+  row("zero", zeroY);
   parts.push(text(-4, zeroY + 2, "0", "y-label", { y: zeroY }));
 
   for (let day = 0; day <= DAYS; day++) {
     if (day % 7 === 0) {
-      thickColumns.push(line(x(day), 0, x(day), weekTailY, "week"));
-      thickColumns.push(line(x(day), nubY, x(day), zeroY, "week nub"));
+      column("week", x(day), 0, weekTailY);
+      column("week nub", x(day), nubY, zeroY);
     } else {
-      thinColumns.push(line(x(day), 0, x(day), floorY, "day"));
-      thinColumns.push(line(x(day), nubY, x(day), zeroY, "day nub"));
+      column("day", x(day), 0, floorY);
+      column("day nub", x(day), nubY, zeroY);
     }
   }
   for (let day = 0; day <= DAYS; day += 14) {
@@ -350,10 +356,7 @@ export function renderChart({ phases = [], startDate, ...counts }: ChartOptions 
     `<svg class="plot" x="${plot[0]}" y="${plot[1]}" width="${plot[2]}" height="${plot[3]}" viewBox="${plot.join(" ")}"${focusAttribute}>`,
     // Unpainted, but catches the pointer between the lines so a drag can start anywhere.
     `<rect class="plot-area" x="${plot[0]}" y="${plot[1]}" width="${plot[2]}" height="${plot[3]}"/>`,
-    ...thinRows,
-    ...thinColumns,
-    ...thickRows,
-    ...thickColumns,
+    ...Object.entries(grid).map(([cls, lines]) => `<path class="grid ${cls}" d="${lines.join("")}"/>`),
     ...phaseLines,
     ...learning.flatMap((line) =>
       line && line.end > line.start ? [trendPath(line, "learning", "Learning line")] : [],
@@ -375,7 +378,7 @@ export function renderChart({ phases = [], startDate, ...counts }: ChartOptions 
 
 const STYLE = `
 /* Strokes are in screen pixels, so lines stay hairlines however far the chart is scaled. */
-line { stroke: #4a9fd8; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.grid { fill: none; stroke: #4a9fd8; stroke-width: 1; vector-effect: non-scaling-stroke; }
 .day, .unit { stroke: #c4e0f4; }
 .half { stroke: #8cc4e9; }
 .week, .decade, .zero { stroke-width: 2; }
@@ -727,10 +730,6 @@ function zoomControl(right: number, top: number): string {
     button(zoomInLeft, "zoom-in", "Zoom in", "+"),
     `</g>`,
   ].join("\n");
-}
-
-function line(x1: number, y1: number, x2: number, y2: number, cls: string): string {
-  return `<line class="${cls}" x1="${round(x1)}" y1="${round(y1)}" x2="${round(x2)}" y2="${round(y2)}"/>`;
 }
 
 /** `data` records where an axis label's grid line is, for enableZoom to move it with the grid. */

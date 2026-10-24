@@ -2,6 +2,19 @@ import { describe, expect, it } from "vitest";
 import { DAY_WIDTH, chartHeight, renderChart } from "./render.js";
 import { DAYS } from "./scale.js";
 
+/** The ends of each line in a chart's grid path of class `cls`, such as "day" or "week nub". */
+const gridLines = (svg: string, cls: string) => {
+  const d = svg.match(new RegExp(`<path class="grid ${cls}" d="([^"]*)"`))?.[1] ?? "";
+  return [...d.matchAll(/M(-?[\d.]+) (-?[\d.]+)([HV])(-?[\d.]+)/g)].map(([, x1, y1, direction, to]) => ({
+    x1: Number(x1),
+    y1: Number(y1),
+    x2: Number(direction === "H" ? to : x1),
+    y2: Number(direction === "V" ? to : y1),
+  }));
+};
+/** Where the last grid path ends, for checking what is drawn over the grid. */
+const gridEnd = (svg: string) => svg.lastIndexOf('<path class="grid');
+
 describe("chartHeight", () => {
   it("makes a x2 per week line rise at 34 degrees", () => {
     const width = 700;
@@ -28,7 +41,7 @@ describe("renderChart", () => {
   });
 
   it("draws thin lines first, then thick horizontal lines, then thick vertical lines", () => {
-    const order = [...svg.matchAll(/<line class="(\w+)/g)].map((match) => match[1]);
+    const order = [...svg.matchAll(/<path class="grid (\w+)/g)].map((match) => match[1]);
     const layer = (cls: string | undefined) =>
       ({ unit: 0, day: 1, decade: 2, half: 2, zero: 2, week: 3 })[cls ?? ""];
     const layers = order.map(layer);
@@ -37,14 +50,12 @@ describe("renderChart", () => {
   });
 
   it("draws a line for every day and a heavier one every week", () => {
-    expect(svg.match(/class="(day|week)"/g)).toHaveLength(DAYS + 1);
-    expect(svg.match(/class="week"/g)).toHaveLength(DAYS / 7 + 1);
+    expect(gridLines(svg, "day").length + gridLines(svg, "week").length).toBe(DAYS + 1);
+    expect(gridLines(svg, "week")).toHaveLength(DAYS / 7 + 1);
   });
 
   it("spaces the day lines DAY_WIDTH apart", () => {
-    const xs = [...svg.matchAll(/class="(?:day|week)" x1="([\d.]+)"/g)]
-      .map((match) => Number(match[1]))
-      .sort((a, b) => a - b);
+    const xs = [...gridLines(svg, "day"), ...gridLines(svg, "week")].map((line) => line.x1).sort((a, b) => a - b);
     expect(xs).toEqual(Array.from({ length: DAYS + 1 }, (_, day) => day * DAY_WIDTH));
   });
 
@@ -55,12 +66,8 @@ describe("renderChart", () => {
   });
 
   describe("zero row", () => {
-    const rowYs = (cls: string) =>
-      [...svg.matchAll(new RegExp(`class="${cls}" x1="0" y1="([\\d.]+)"`, "g"))].map((match) => Number(match[1]));
-    const columns = (cls: string) =>
-      [...svg.matchAll(new RegExp(`class="${cls}" x1="[\\d.]+" y1="([\\d.]+)" x2="[\\d.]+" y2="([\\d.]+)"`, "g"))].map(
-        (match) => ({ top: Number(match[1]), bottom: Number(match[2]) }),
-      );
+    const rowYs = (cls: string) => gridLines(svg, cls).map((line) => line.y1);
+    const columns = (cls: string) => gridLines(svg, cls).map((line) => ({ top: line.y1, bottom: line.y2 }));
     const lowestDecade = Math.max(...rowYs("decade"));
     const zero = rowYs("zero")[0] ?? NaN;
 
@@ -165,7 +172,7 @@ describe("renderChart corrects", () => {
 
   it("draws the dots over the grid", () => {
     const svg = renderChart({ corrects: [1], timingSeconds: [60] });
-    expect(svg.indexOf("<circle")).toBeGreaterThan(svg.lastIndexOf("<line"));
+    expect(svg.indexOf("<circle")).toBeGreaterThan(gridEnd(svg));
   });
 });
 
@@ -222,7 +229,7 @@ describe("renderChart errors", () => {
 
   it("draws the crosses over the grid", () => {
     const svg = renderChart({ errors: [1], timingSeconds: [60] });
-    expect(svg.indexOf('<path class="error"')).toBeGreaterThan(svg.lastIndexOf("<line"));
+    expect(svg.indexOf('<path class="error"')).toBeGreaterThan(gridEnd(svg));
   });
 });
 
@@ -264,7 +271,7 @@ describe("renderChart record floors", () => {
   it("draws the dashes over the grid and under the dots and crosses", () => {
     const svg = renderChart({ corrects: [1], errors: [1], timingSeconds: [60] });
     const floor = svg.indexOf('<path class="floor"');
-    expect(floor).toBeGreaterThan(svg.lastIndexOf("<line"));
+    expect(floor).toBeGreaterThan(gridEnd(svg));
     expect(floor).toBeLessThan(svg.indexOf("<circle"));
     expect(floor).toBeLessThan(svg.indexOf('<path class="error"'));
   });
@@ -294,7 +301,7 @@ describe("renderChart phases", () => {
       y: Number(match[2]) + 3,
     }));
   const labelY = (svg: string, label: string) => Number(svg.match(new RegExp(`y="([\\d.]+)">${label}</text>`))?.[1]);
-  const zeroY = (svg: string) => Number(svg.match(/class="zero" x1="0" y1="([\d.]+)"/)?.[1]);
+  const zeroY = (svg: string) => gridLines(svg, "zero")[0]?.y1;
 
   it("draws no phase line for a single phase, even with an end day", () => {
     expect(phaseLinesIn(renderChart({ phases: [{ name: "Baseline", endDay: 10 }] }))).toEqual([]);
@@ -306,8 +313,8 @@ describe("renderChart phases", () => {
     });
     const lines = phaseLinesIn(svg);
     const column = (cls: string) => {
-      const match = svg.match(new RegExp(`class="${cls}" x1="0" y1="([\\d.]+)" x2="0" y2="([\\d.]+)"`));
-      return { top: Number(match?.[1]), bottom: Number(match?.[2]) };
+      const line = gridLines(svg, cls).find(({ x1 }) => x1 === 0);
+      return { top: line?.y1, bottom: line?.y2 };
     };
     const [weekLine, weekNub] = [column("week"), column("week nub")];
     expect(lines.map((line) => line.x)).toEqual([6.5 * DAY_WIDTH, 20.5 * DAY_WIDTH]);
@@ -322,7 +329,7 @@ describe("renderChart phases", () => {
   it("draws the phase lines over the grid and under the marks", () => {
     const svg = renderChart({ corrects: [1], timingSeconds: [60], phases: [{ name: "A", endDay: 0 }, { name: "B" }] });
     const phase = svg.indexOf('<path class="phase"');
-    expect(phase).toBeGreaterThan(svg.lastIndexOf("<line"));
+    expect(phase).toBeGreaterThan(gridEnd(svg));
     expect(phase).toBeLessThan(svg.indexOf("<circle"));
   });
 
@@ -501,7 +508,7 @@ describe("renderChart learning lines", () => {
   it("draws the line over the grid and under the marks", () => {
     const svg = renderChart({ corrects: [10], timingSeconds, phases: [{ name: "A", aim: 20, celeration: 2 }] });
     const learning = svg.indexOf('<path class="learning"');
-    expect(learning).toBeGreaterThan(svg.lastIndexOf("<line"));
+    expect(learning).toBeGreaterThan(gridEnd(svg));
     expect(learning).toBeLessThan(svg.indexOf('<path class="aim"'));
     expect(learning).toBeLessThan(svg.indexOf("<circle"));
   });
@@ -596,7 +603,7 @@ describe("renderChart best fit lines", () => {
   it("draws the lines over the grid and under the marks", () => {
     const svg = renderChart({ corrects: [5, 6], errors: [1, 2], timingSeconds });
     const fit = svg.indexOf('<path class="fit');
-    expect(fit).toBeGreaterThan(svg.lastIndexOf("<line"));
+    expect(fit).toBeGreaterThan(gridEnd(svg));
     expect(svg.lastIndexOf('<path class="fit')).toBeLessThan(svg.indexOf("<circle"));
   });
 });
@@ -611,7 +618,7 @@ describe("renderChart zoom", () => {
     expect(viewBox).toBe(`${x} ${y} ${width} ${height}`);
     expect(Number(width)).toBeGreaterThan(DAYS * DAY_WIDTH);
     const inside = svg.slice(svg.indexOf('class="plot"'), svg.indexOf("</svg>"));
-    expect(inside).toContain('class="week"');
+    expect(inside).toContain('class="grid week"');
     expect(inside).not.toContain("<text");
   });
 
