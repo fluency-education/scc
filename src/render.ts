@@ -146,16 +146,17 @@ export function renderChart({ phases = [], startDate, ...counts }: ChartOptions 
   const corrects = [...unrecorded, ...(counts.corrects ?? [])];
   const errors = [...unrecorded, ...(counts.errors ?? [])];
   const timingSeconds = [...unrecorded, ...(counts.timingSeconds ?? [])];
-  const dateOf = (day: number) => (startDate === undefined ? undefined : dayToDate(startDate, day - offset));
+  // Most days are named on several cards, and working out and writing a date is slow, so each is done once.
+  const dateOf = perDay((day) => (startDate === undefined ? undefined : dayToDate(startDate, day - offset)));
   /** How the x-axis and cards name a day: its date, or its number without a start date. */
   const axisDay = (day: number) => {
     const date = dateOf(day);
     return date ? formatAxisDate(date) : String(day);
   };
-  const cardDay = (day: number) => {
+  const cardDay = perDay((day) => {
     const date = dateOf(day);
     return date ? formatCardDate(date) : `Day ${day}`;
-  };
+  });
   const width = DAYS * DAY_WIDTH;
   const height = chartHeight(width);
   const x = dayScale({ left: 0, right: width });
@@ -674,6 +675,15 @@ function perMinute(counts: readonly number[], timingSeconds: readonly number[]):
     const seconds = timingSeconds[day] ?? -1;
     return count >= 0 && seconds > 0 ? toFrequency(count, seconds / 60) : -1;
   });
+}
+
+/** `name`, remembering what it gave for each day so it runs once per day. */
+function perDay<T>(name: (day: number) => T): (day: number) => T {
+  const named = new Map<number, T>();
+  return (day) => {
+    if (!named.has(day)) named.set(day, name(day));
+    return named.get(day) as T;
+  };
 }
 
 function isPlottable(frequency: number): boolean {
