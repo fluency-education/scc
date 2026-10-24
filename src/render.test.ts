@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DAY_WIDTH, chartHeight, renderChart } from "./render.js";
 import { DAYS } from "./scale.js";
 
@@ -159,7 +159,9 @@ describe("renderChart corrects", () => {
   });
 
   it("skips days without a timing", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const svg = renderChart({ corrects: [5, 5, 5], timingSeconds: [0, -1] });
+    warn.mockRestore();
     expect(dotsIn(svg)).toEqual([]);
   });
 
@@ -848,5 +850,41 @@ describe("renderChart dates", () => {
     expect(lines?.[3]).toMatch(/^Wed, Sep 9 target/);
     expect(lines?.[4]).toBe("Wed, Sep 9: 20 per minute — Hit");
     expect(svg).toContain('data-card="Mon, Sep 7 · Record floor');
+  });
+});
+
+describe("missing timing warnings", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+  const warnings = (options: Parameters<typeof renderChart>[0]) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    renderChart(options);
+    return warn.mock.calls.map(([message]) => String(message));
+  };
+
+  it("warns once, naming the days with a count but no timing", () => {
+    const [warning, ...rest] = warnings({ corrects: [5, 5, 0, 5], errors: [-1, -1, -1, -1, 2], timingSeconds: [60, 0, -1] });
+    expect(rest).toEqual([]);
+    expect(warning).toContain("days 1, 2, 3, 4 have a count but no timing");
+  });
+
+  it("names a single day", () => {
+    expect(warnings({ corrects: [5], timingSeconds: [] })[0]).toContain("day 0 has a count but no timing");
+  });
+
+  it("lists the first ten days and counts the rest", () => {
+    expect(warnings({ corrects: Array<number>(15).fill(5) })[0]).toContain("days 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, and 5 more");
+  });
+
+  it("numbers days as passed, from the start date", () => {
+    // 2026-10-21 is a Wednesday, so the chart's first three days come before it.
+    const [warning] = warnings({ corrects: [5, 5], timingSeconds: [60], startDate: "2026-10-21" });
+    expect(warning).toContain("day 1 has");
+  });
+
+  it("stays quiet when every count has a timing", () => {
+    expect(warnings({ corrects: [5, -1], errors: [1], timingSeconds: [60] })).toEqual([]);
+    expect(warnings({ timingSeconds: [60] })).toEqual([]);
   });
 });

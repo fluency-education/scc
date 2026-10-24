@@ -102,8 +102,9 @@ export interface Phase {
 export interface ChartOptions {
   /**
    * Correct counts, one per consecutive day starting at day 0, each divided by
-   * that day's timing to plot it per minute. A negative count, or a day without
-   * a timing, marks a day with nothing recorded. A count of zero is drawn just
+   * that day's timing to plot it per minute. A negative count marks a day with
+   * nothing recorded. A count on a day without a timing is not drawn either, and
+   * renderChart warns about it in the console. A count of zero is drawn just
    * under the day's record floor, beside a zero error if there is one.
    * Frequencies or record floors outside .001–1000 and days past the last day
    * of the chart are not drawn. A dashed best fit line runs through the
@@ -138,6 +139,7 @@ export interface ChartOptions {
  * and lines show their details on hover once it is passed to enableHover.
  */
 export function renderChart({ phases = [], startDate, ...counts }: ChartOptions = {}): string {
+  warnMissingTimings(counts.corrects ?? [], counts.errors ?? [], counts.timingSeconds ?? []);
   // A dated chart starts on the Sunday on or before the start date, leaving the
   // days between unrecorded. Counts, timings and end days still count from the
   // start date; everything below counts from the chart's first day.
@@ -675,6 +677,27 @@ function perMinute(counts: readonly number[], timingSeconds: readonly number[]):
     const seconds = timingSeconds[day] ?? -1;
     return count >= 0 && seconds > 0 ? toFrequency(count, seconds / 60) : -1;
   });
+}
+
+/**
+ * Warns in the console about days with a count but no timing, which can't be
+ * plotted per minute and so are left off the chart. Days are numbered as passed,
+ * from the start date.
+ */
+function warnMissingTimings(
+  corrects: readonly number[],
+  errors: readonly number[],
+  timingSeconds: readonly number[],
+): void {
+  const days = Array.from({ length: Math.max(corrects.length, errors.length) }, (_, day) => day).filter(
+    (day) => ((corrects[day] ?? -1) >= 0 || (errors[day] ?? -1) >= 0) && !((timingSeconds[day] ?? -1) > 0),
+  );
+  if (days.length === 0) return;
+  const shown = days.slice(0, 10).join(", ") + (days.length > 10 ? `, and ${days.length - 10} more` : "");
+  console.warn(
+    `renderChart: ${days.length === 1 ? "day" : "days"} ${shown} ${days.length === 1 ? "has" : "have"} a count but no timing, ` +
+      "so nothing is drawn for them. Give each day with a count a positive timingSeconds.",
+  );
 }
 
 /** `name`, remembering what it gave for each day so it runs once per day. */
