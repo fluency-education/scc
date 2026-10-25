@@ -1,6 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { DAY_WIDTH, chartHeight, renderChart } from "./render.js";
+import { type ChartOptions, DAY_WIDTH, chartHeight, renderChart } from "./render.js";
 import { DAYS } from "./scale.js";
+
+/** The ends of each line in a chart's grid path of class `cls`, such as "day" or "week nub". */
+const gridLines = (svg: string, cls: string) => {
+  const d = svg.match(new RegExp(`<path class="grid ${cls}" d="([^"]*)"`))?.[1] ?? "";
+  return [...d.matchAll(/M(-?[\d.]+) (-?[\d.]+)([HV])(-?[\d.]+)/g)].map(([, x1, y1, direction, to]) => ({
+    x1: Number(x1),
+    y1: Number(y1),
+    x2: Number(direction === "H" ? to : x1),
+    y2: Number(direction === "V" ? to : y1),
+  }));
+};
+/** Where the last grid path ends, for checking what is drawn over the grid. */
+const gridEnd = (svg: string) => svg.lastIndexOf('<path class="grid');
+/** renderChart with a 1 minute timing on each day with a count, and -1 on the days without. */
+const timed = (options: ChartOptions) =>
+  renderChart({ ...options, timingSeconds: (options.corrects ?? options.errors ?? []).map((count) => (count === -1 ? -1 : 60)) });
 
 describe("chartHeight", () => {
   it("makes a x2 per week line rise at 34 degrees", () => {
@@ -28,7 +44,7 @@ describe("renderChart", () => {
   });
 
   it("draws thin lines first, then thick horizontal lines, then thick vertical lines", () => {
-    const order = [...svg.matchAll(/<line class="(\w+)/g)].map((match) => match[1]);
+    const order = [...svg.matchAll(/<path class="grid (\w+)/g)].map((match) => match[1]);
     const layer = (cls: string | undefined) =>
       ({ unit: 0, day: 1, decade: 2, half: 2, zero: 2, week: 3 })[cls ?? ""];
     const layers = order.map(layer);
@@ -37,14 +53,12 @@ describe("renderChart", () => {
   });
 
   it("draws a line for every day and a heavier one every week", () => {
-    expect(svg.match(/class="(day|week)"/g)).toHaveLength(DAYS + 1);
-    expect(svg.match(/class="week"/g)).toHaveLength(DAYS / 7 + 1);
+    expect(gridLines(svg, "day").length + gridLines(svg, "week").length).toBe(DAYS + 1);
+    expect(gridLines(svg, "week")).toHaveLength(DAYS / 7 + 1);
   });
 
   it("spaces the day lines DAY_WIDTH apart", () => {
-    const xs = [...svg.matchAll(/class="(?:day|week)" x1="([\d.]+)"/g)]
-      .map((match) => Number(match[1]))
-      .sort((a, b) => a - b);
+    const xs = [...gridLines(svg, "day"), ...gridLines(svg, "week")].map((line) => line.x1).sort((a, b) => a - b);
     expect(xs).toEqual(Array.from({ length: DAYS + 1 }, (_, day) => day * DAY_WIDTH));
   });
 
@@ -55,12 +69,8 @@ describe("renderChart", () => {
   });
 
   describe("zero row", () => {
-    const rowYs = (cls: string) =>
-      [...svg.matchAll(new RegExp(`class="${cls}" x1="0" y1="([\\d.]+)"`, "g"))].map((match) => Number(match[1]));
-    const columns = (cls: string) =>
-      [...svg.matchAll(new RegExp(`class="${cls}" x1="[\\d.]+" y1="([\\d.]+)" x2="[\\d.]+" y2="([\\d.]+)"`, "g"))].map(
-        (match) => ({ top: Number(match[1]), bottom: Number(match[2]) }),
-      );
+    const rowYs = (cls: string) => gridLines(svg, cls).map((line) => line.y1);
+    const columns = (cls: string) => gridLines(svg, cls).map((line) => ({ top: line.y1, bottom: line.y2 }));
     const lowestDecade = Math.max(...rowYs("decade"));
     const zero = rowYs("zero")[0] ?? NaN;
 
@@ -123,8 +133,8 @@ describe("renderChart corrects", () => {
     expect(second?.cy).toBeCloseTo(labelY(svg, "10") - 2);
   });
 
-  it("skips days with a negative value", () => {
-    const svg = renderChart({ corrects: [5, -1, 5], timingSeconds: [60, 60, 60] });
+  it("skips days with nothing recorded", () => {
+    const svg = renderChart({ corrects: [5, -1, 5], timingSeconds: [60, -1, 60] });
     expect(dotsIn(svg).map((dot) => dot.cx)).toEqual([0, 2 * DAY_WIDTH]);
   });
 
@@ -139,11 +149,6 @@ describe("renderChart corrects", () => {
     expect(second?.cy).toBeLessThan(labelY(svg, ".1") - 2 + 2.5);
   });
 
-  it("skips zero when its record floor is off the chart", () => {
-    const svg = renderChart({ corrects: [0], timingSeconds: [2000 * 60] });
-    expect(dotsIn(svg)).toEqual([]);
-  });
-
   it("divides each count by its day's timing", () => {
     const svg = renderChart({ corrects: [5, 100], timingSeconds: [30, 600] });
     const [first, second] = dotsIn(svg);
@@ -151,21 +156,9 @@ describe("renderChart corrects", () => {
     expect(second?.cy).toBeCloseTo(labelY(svg, "10") - 2);
   });
 
-  it("skips days without a timing", () => {
-    const svg = renderChart({ corrects: [5, 5, 5], timingSeconds: [0, -1] });
-    expect(dotsIn(svg)).toEqual([]);
-  });
-
-  it("skips frequencies off the chart and days past the last day", () => {
-    // 1 in 2000 minutes is below .001; 1001 in a minute is above 1000.
-    const corrects = [1, 1001, ...Array<number>(DAYS - 1).fill(-1), 5];
-    const timingSeconds = [2000 * 60, ...Array<number>(DAYS + 1).fill(60)];
-    expect(dotsIn(renderChart({ corrects, timingSeconds }))).toEqual([]);
-  });
-
   it("draws the dots over the grid", () => {
     const svg = renderChart({ corrects: [1], timingSeconds: [60] });
-    expect(svg.indexOf("<circle")).toBeGreaterThan(svg.lastIndexOf("<line"));
+    expect(svg.indexOf("<circle")).toBeGreaterThan(gridEnd(svg));
   });
 });
 
@@ -186,8 +179,8 @@ describe("renderChart errors", () => {
     expect(second?.cy).toBeCloseTo(labelY(svg, "10") - 2);
   });
 
-  it("skips negative days, draws zero under the record floor and skips off-chart values", () => {
-    const svg = renderChart({ errors: [0, -1, 1, 1001], timingSeconds: [60, 60, 2000 * 60, 60] });
+  it("skips days with nothing recorded and draws zero under the record floor", () => {
+    const svg = renderChart({ errors: [0, -1], timingSeconds: [60, -1] });
     const crosses = crossesIn(svg);
     expect(crosses).toHaveLength(1);
     expect(crosses[0]?.cx).toBeCloseTo(0);
@@ -222,7 +215,7 @@ describe("renderChart errors", () => {
 
   it("draws the crosses over the grid", () => {
     const svg = renderChart({ errors: [1], timingSeconds: [60] });
-    expect(svg.indexOf('<path class="error"')).toBeGreaterThan(svg.lastIndexOf("<line"));
+    expect(svg.indexOf('<path class="error"')).toBeGreaterThan(gridEnd(svg));
   });
 });
 
@@ -255,16 +248,15 @@ describe("renderChart record floors", () => {
     expect(second?.cy).toBeCloseTo(labelY(svg, ".5") - 1.5);
   });
 
-  it("skips negative and zero timings and floors off the chart", () => {
-    // 2000 minutes floors below .001; .03 seconds floors above 1000.
-    const svg = renderChart({ timingSeconds: [-1, 0, 2000 * 60, 0.03, 60] });
-    expect(dashesIn(svg)).toEqual([{ cx: 4 * DAY_WIDTH, cy: dashesIn(renderChart({ timingSeconds: [60] }))[0]?.cy }]);
+  it("skips days without a timing", () => {
+    const svg = renderChart({ timingSeconds: [-1, 60] });
+    expect(dashesIn(svg)).toEqual([{ cx: DAY_WIDTH, cy: dashesIn(renderChart({ timingSeconds: [60] }))[0]?.cy }]);
   });
 
   it("draws the dashes over the grid and under the dots and crosses", () => {
     const svg = renderChart({ corrects: [1], errors: [1], timingSeconds: [60] });
     const floor = svg.indexOf('<path class="floor"');
-    expect(floor).toBeGreaterThan(svg.lastIndexOf("<line"));
+    expect(floor).toBeGreaterThan(gridEnd(svg));
     expect(floor).toBeLessThan(svg.indexOf("<circle"));
     expect(floor).toBeLessThan(svg.indexOf('<path class="error"'));
   });
@@ -294,7 +286,7 @@ describe("renderChart phases", () => {
       y: Number(match[2]) + 3,
     }));
   const labelY = (svg: string, label: string) => Number(svg.match(new RegExp(`y="([\\d.]+)">${label}</text>`))?.[1]);
-  const zeroY = (svg: string) => Number(svg.match(/class="zero" x1="0" y1="([\d.]+)"/)?.[1]);
+  const zeroY = (svg: string) => gridLines(svg, "zero")[0]?.y1;
 
   it("draws no phase line for a single phase, even with an end day", () => {
     expect(phaseLinesIn(renderChart({ phases: [{ name: "Baseline", endDay: 10 }] }))).toEqual([]);
@@ -306,8 +298,8 @@ describe("renderChart phases", () => {
     });
     const lines = phaseLinesIn(svg);
     const column = (cls: string) => {
-      const match = svg.match(new RegExp(`class="${cls}" x1="0" y1="([\\d.]+)" x2="0" y2="([\\d.]+)"`));
-      return { top: Number(match?.[1]), bottom: Number(match?.[2]) };
+      const line = gridLines(svg, cls).find(({ x1 }) => x1 === 0);
+      return { top: line?.y1, bottom: line?.y2 };
     };
     const [weekLine, weekNub] = [column("week"), column("week nub")];
     expect(lines.map((line) => line.x)).toEqual([6.5 * DAY_WIDTH, 20.5 * DAY_WIDTH]);
@@ -322,13 +314,8 @@ describe("renderChart phases", () => {
   it("draws the phase lines over the grid and under the marks", () => {
     const svg = renderChart({ corrects: [1], timingSeconds: [60], phases: [{ name: "A", endDay: 0 }, { name: "B" }] });
     const phase = svg.indexOf('<path class="phase"');
-    expect(phase).toBeGreaterThan(svg.lastIndexOf("<line"));
+    expect(phase).toBeGreaterThan(gridEnd(svg));
     expect(phase).toBeLessThan(svg.indexOf("<circle"));
-  });
-
-  it("skips a phase line past the last day", () => {
-    const svg = renderChart({ phases: [{ name: "A", endDay: DAYS }, { name: "B" }] });
-    expect(phaseLinesIn(svg)).toEqual([]);
   });
 
   it("throws when a phase before the last has no end day or ends before it starts", () => {
@@ -393,10 +380,6 @@ describe("renderChart phases", () => {
     expect(star?.x).toBeCloseTo(30 * DAY_WIDTH);
   });
 
-  it("skips aims off the chart", () => {
-    const svg = renderChart({ phases: [{ name: "A", endDay: 10, aim: 2000 }, { name: "B", aim: 0 }] });
-    expect(starsIn(svg)).toEqual([]);
-  });
 });
 
 describe("renderChart learning lines", () => {
@@ -413,11 +396,10 @@ describe("renderChart learning lines", () => {
       y: Number(match[2]) + 3,
     }));
   const labelY = (svg: string, label: string) => Number(svg.match(new RegExp(`y="([\\d.]+)">${label}</text>`))?.[1]);
-  const timingSeconds = Array<number>(DAYS + 1).fill(60);
 
   it("runs from the first correct at the celeration until it reaches the aim", () => {
     // ×2 a week from 10 reaches 40 in two weeks.
-    const svg = renderChart({ corrects: [-1, 10, 12], timingSeconds, phases: [{ name: "A", aim: 40, celeration: 2 }] });
+    const svg = timed({ corrects: [-1, 10, 12], phases: [{ name: "A", aim: 40, celeration: 2 }] });
     const [line] = linesIn(svg);
     const [star] = starsIn(svg);
     expect(line?.x1).toBeCloseTo(DAY_WIDTH);
@@ -429,7 +411,7 @@ describe("renderChart learning lines", () => {
 
   it("puts the star on the next whole day when the aim is reached part way through one", () => {
     // ×2 a week from 10 reaches 30 after 7 × log2(3) ≈ 11.09 days, on day 12.09.
-    const svg = renderChart({ corrects: [-1, 10], timingSeconds, phases: [{ name: "A", aim: 30, celeration: 2 }] });
+    const svg = timed({ corrects: [-1, 10], phases: [{ name: "A", aim: 30, celeration: 2 }] });
     const [line] = linesIn(svg);
     const [star] = starsIn(svg);
     expect(line?.x2).toBeCloseTo((1 + 7 * Math.log2(3)) * DAY_WIDTH, 1);
@@ -438,7 +420,7 @@ describe("renderChart learning lines", () => {
   });
 
   it("falls when the celeration is below one", () => {
-    const svg = renderChart({ corrects: [8], timingSeconds, phases: [{ name: "A", aim: 2, celeration: 0.5 }] });
+    const svg = timed({ corrects: [8], phases: [{ name: "A", aim: 2, celeration: 0.5 }] });
     const [line] = linesIn(svg);
     expect(line?.x2).toBeCloseTo(14 * DAY_WIDTH);
     expect(line?.y2).toBeGreaterThan(line?.y1 ?? NaN);
@@ -447,9 +429,8 @@ describe("renderChart learning lines", () => {
 
   it("starts each phase's line at that phase's first correct above zero", () => {
     const corrects = [5, -1, -1, -1, -1, -1, -1, 0, -1, 10];
-    const svg = renderChart({
+    const svg = timed({
       corrects,
-      timingSeconds,
       phases: [{ name: "A", endDay: 6 }, { name: "B", aim: 20, celeration: 2 }],
     });
     const lines = linesIn(svg);
@@ -459,9 +440,8 @@ describe("renderChart learning lines", () => {
   });
 
   it("runs to the end of the phase without an aim", () => {
-    const svg = renderChart({
+    const svg = timed({
       corrects: [10],
-      timingSeconds,
       phases: [{ name: "A", endDay: 14, celeration: 2 }, { name: "B" }],
     });
     const [line] = linesIn(svg);
@@ -471,9 +451,8 @@ describe("renderChart learning lines", () => {
   });
 
   it("runs to the end of the phase and keeps the star there when the line never reaches the aim", () => {
-    const svg = renderChart({
+    const svg = timed({
       corrects: [10],
-      timingSeconds,
       phases: [{ name: "A", endDay: 20, aim: 5, celeration: 2 }, { name: "B" }],
     });
     expect(linesIn(svg)[0]?.x2).toBeCloseTo(20 * DAY_WIDTH);
@@ -481,17 +460,16 @@ describe("renderChart learning lines", () => {
   });
 
   it("stops at the top of the chart", () => {
-    const svg = renderChart({ corrects: [500], timingSeconds, phases: [{ name: "A", celeration: 2 }] });
+    const svg = timed({ corrects: [500], phases: [{ name: "A", celeration: 2 }] });
     const [line] = linesIn(svg);
     expect(line?.x2).toBeCloseTo(7 * DAY_WIDTH);
     expect(line?.y2).toBeCloseTo(0);
   });
 
   it("is not drawn without a celeration or a correct in the phase", () => {
-    expect(linesIn(renderChart({ corrects: [10], timingSeconds, phases: [{ name: "A", aim: 20 }] }))).toEqual([]);
-    const svg = renderChart({
+    expect(linesIn(timed({ corrects: [10], phases: [{ name: "A", aim: 20 }] }))).toEqual([]);
+    const svg = timed({
       corrects: [10],
-      timingSeconds,
       phases: [{ name: "A", endDay: 0 }, { name: "B", endDay: 30, aim: 20, celeration: 2 }, { name: "C" }],
     });
     expect(linesIn(svg)).toEqual([]);
@@ -499,9 +477,9 @@ describe("renderChart learning lines", () => {
   });
 
   it("draws the line over the grid and under the marks", () => {
-    const svg = renderChart({ corrects: [10], timingSeconds, phases: [{ name: "A", aim: 20, celeration: 2 }] });
+    const svg = timed({ corrects: [10], phases: [{ name: "A", aim: 20, celeration: 2 }] });
     const learning = svg.indexOf('<path class="learning"');
-    expect(learning).toBeGreaterThan(svg.lastIndexOf("<line"));
+    expect(learning).toBeGreaterThan(gridEnd(svg));
     expect(learning).toBeLessThan(svg.indexOf('<path class="aim"'));
     expect(learning).toBeLessThan(svg.indexOf("<circle"));
   });
@@ -513,12 +491,11 @@ describe("renderChart best fit lines", () => {
       (match) => ({ x1: Number(match[1]), y1: Number(match[2]), x2: Number(match[3]), y2: Number(match[4]) }),
     );
   const labelY = (svg: string, label: string) => Number(svg.match(new RegExp(`y="([\\d.]+)">${label}</text>`))?.[1]);
-  const timingSeconds = Array<number>(DAYS + 1).fill(60);
 
   it("runs through counts on a straight celeration from the first to the last", () => {
     // ×2 a week, exactly on the line.
     const corrects = [-1, 10, -1, -1, -1, -1, -1, -1, 20, -1, -1, -1, -1, -1, -1, 40];
-    const svg = renderChart({ corrects, timingSeconds });
+    const svg = timed({ corrects });
     const [fit] = fitsIn(svg, "correct");
     expect(fit?.x1).toBeCloseTo(DAY_WIDTH);
     expect(fit?.y1).toBeCloseTo(labelY(svg, "10") - 2, 1);
@@ -528,7 +505,7 @@ describe("renderChart best fit lines", () => {
 
   it("fits the log of the counts by least squares", () => {
     // 1, 100, 1 averages to a flat line at 10^(2/3) per minute.
-    const svg = renderChart({ corrects: [1, 100, 1], timingSeconds });
+    const svg = timed({ corrects: [1, 100, 1] });
     const [fit] = fitsIn(svg, "correct");
     const expected = labelY(svg, "1") - 2 - (labelY(svg, "1") - labelY(svg, "10")) * (2 / 3);
     expect(fit?.y1).toBeCloseTo(expected, 1);
@@ -536,7 +513,7 @@ describe("renderChart best fit lines", () => {
   });
 
   it("draws a red line through the errors", () => {
-    const svg = renderChart({ corrects: [5, 5], errors: [4, 2], timingSeconds });
+    const svg = timed({ corrects: [5, 5], errors: [4, 2] });
     expect(fitsIn(svg, "correct")).toHaveLength(1);
     const [fit] = fitsIn(svg, "error");
     expect(fit?.y2).toBeLessThan(labelY(svg, "1"));
@@ -544,7 +521,7 @@ describe("renderChart best fit lines", () => {
   });
 
   it("needs two days to fit", () => {
-    expect(fitsIn(renderChart({ corrects: [5, -1], timingSeconds }), "correct")).toEqual([]);
+    expect(fitsIn(timed({ corrects: [5, -1] }), "correct")).toEqual([]);
   });
 
   it("counts a zero as half its record floor", () => {
@@ -561,7 +538,7 @@ describe("renderChart best fit lines", () => {
   it("pulls the line down for zero corrects and up for zero errors that would otherwise be left out", () => {
     const corrects = [10, 10, 10, 0];
     const errors = [0, 2, 2, 2];
-    const svg = renderChart({ corrects, errors, timingSeconds });
+    const svg = timed({ corrects, errors });
     const [correctFit] = fitsIn(svg, "correct");
     const [errorFit] = fitsIn(svg, "error");
     expect(correctFit?.x2).toBeCloseTo(3 * DAY_WIDTH);
@@ -570,15 +547,9 @@ describe("renderChart best fit lines", () => {
     expect(errorFit?.y2).toBeLessThan(errorFit?.y1 ?? NaN);
   });
 
-  it("leaves out a zero whose record floor is off the chart", () => {
-    const svg = renderChart({ corrects: [5, 5, 0], timingSeconds: [60, 60, 2000 * 60] });
-    expect(fitsIn(svg, "correct")[0]?.x2).toBeCloseTo(DAY_WIDTH);
-  });
-
   it("fits each phase on its own", () => {
-    const svg = renderChart({
+    const svg = timed({
       corrects: [10, 10, 10, 40, 20],
-      timingSeconds,
       phases: [{ name: "A", endDay: 2 }, { name: "B", endDay: 3 }, { name: "C" }],
     });
     const fits = fitsIn(svg, "correct");
@@ -587,16 +558,16 @@ describe("renderChart best fit lines", () => {
   });
 
   it("stops at the top of the chart", () => {
-    const svg = renderChart({ corrects: [100, 500, 1000, 1000], timingSeconds });
+    const svg = timed({ corrects: [100, 500, 1000, 1000] });
     const [fit] = fitsIn(svg, "correct");
     expect(fit?.y2).toBeCloseTo(0);
     expect(fit?.x2).toBeLessThan(3 * DAY_WIDTH);
   });
 
   it("draws the lines over the grid and under the marks", () => {
-    const svg = renderChart({ corrects: [5, 6], errors: [1, 2], timingSeconds });
+    const svg = timed({ corrects: [5, 6], errors: [1, 2] });
     const fit = svg.indexOf('<path class="fit');
-    expect(fit).toBeGreaterThan(svg.lastIndexOf("<line"));
+    expect(fit).toBeGreaterThan(gridEnd(svg));
     expect(svg.lastIndexOf('<path class="fit')).toBeLessThan(svg.indexOf("<circle"));
   });
 });
@@ -611,7 +582,7 @@ describe("renderChart zoom", () => {
     expect(viewBox).toBe(`${x} ${y} ${width} ${height}`);
     expect(Number(width)).toBeGreaterThan(DAYS * DAY_WIDTH);
     const inside = svg.slice(svg.indexOf('class="plot"'), svg.indexOf("</svg>"));
-    expect(inside).toContain('class="week"');
+    expect(inside).toContain('class="grid week"');
     expect(inside).not.toContain("<text");
   });
 
@@ -632,14 +603,13 @@ describe("renderChart zoom", () => {
         x: Number(match[1]),
         y: Number(match[2]),
       }));
-    const timings = (counts: readonly number[]) => counts.map(() => 60);
 
     it("has nothing to focus on without marks", () => {
       expect(focusOf(svg)).toBeUndefined();
     });
 
     it("takes in every mark without phases", () => {
-      const chart = renderChart({ corrects: [10, -1, 20, 30], timingSeconds: timings([10, -1, 20, 30]) });
+      const chart = timed({ corrects: [10, -1, 20, 30] });
       const focus = focusOf(chart);
       for (const dot of dots(chart)) {
         expect(dot.x).toBeGreaterThan(focus?.left ?? NaN);
@@ -652,10 +622,8 @@ describe("renderChart zoom", () => {
     });
 
     it("covers the phase holding the latest mark, from its phase line to its aim", () => {
-      const corrects = Array.from({ length: 20 }, (_, day) => (day < 15 ? 5 + day : -1));
-      const chart = renderChart({
-        corrects,
-        timingSeconds: timings(corrects.slice(0, 15)),
+      const chart = timed({
+        corrects: Array.from({ length: 15 }, (_, day) => 5 + day),
         phases: [
           { name: "A", endDay: 9 },
           { name: "B", endDay: 12, aim: 500 },
@@ -692,12 +660,10 @@ describe("renderChart cards", () => {
       result: match[2],
     }));
   const card = (svg: string, title: string) => cards(svg).find(({ lines }) => lines[0] === title);
-  const timingSeconds = Array.from({ length: 20 }, () => 60);
 
   it("gives a correct its day, rate, count and timing, and the next day's target at its phase's celeration", () => {
-    const svg = renderChart({
+    const svg = timed({
       corrects: [10, 12],
-      timingSeconds,
       phases: [{ name: "Practice", celeration: 1.25 }],
     });
     const target = 10 * 1.25 ** (1 / 7);
@@ -712,7 +678,7 @@ describe("renderChart cards", () => {
   });
 
   it("aims for ×2 per week without a phase celeration, and marks a miss", () => {
-    const svg = renderChart({ corrects: [10, 10], timingSeconds });
+    const svg = timed({ corrects: [10, 10] });
     const { lines, result } = card(svg, "Day 0 · Correct") ?? {};
     expect(lines?.[3]).toBe(`Day 1 target (×2/week): ${Number((10 * 2 ** (1 / 7)).toPrecision(3))}`);
     expect(lines?.[4]).toBe("Day 1: 10 per minute — Miss");
@@ -720,20 +686,20 @@ describe("renderChart cards", () => {
   });
 
   it("sets the target for the next recorded day, however far off", () => {
-    const svg = renderChart({ corrects: [10, -1, -1, 20], timingSeconds });
+    const svg = timed({ corrects: [10, -1, -1, 20] });
     const { lines } = card(svg, "Day 0 · Correct") ?? {};
     expect(lines?.[3]).toBe(`Day 3 target (×2/week): ${Number((10 * 2 ** (3 / 7)).toPrecision(3))}`);
     expect(lines?.[4]).toBe("Day 3: 20 per minute — Hit");
   });
 
   it("counts staying under the target as a hit when the celeration falls", () => {
-    const svg = renderChart({ corrects: [10, 8], timingSeconds, phases: [{ name: "Fewer", celeration: 0.5 }] });
+    const svg = timed({ corrects: [10, 8], phases: [{ name: "Fewer", celeration: 0.5 }] });
     expect(card(svg, "Day 0 · Correct")?.lines[3]).toContain("(÷2/week)");
     expect(card(svg, "Day 0 · Correct")?.result).toBe("hit");
   });
 
   it("gives only the target until the next day is recorded, and none from zero", () => {
-    const svg = renderChart({ corrects: [0, 10], timingSeconds });
+    const svg = timed({ corrects: [0, 10] });
     expect(card(svg, "Day 0 · Correct")?.lines).toEqual(["Day 0 · Correct", "0 per minute", "0 in a 1 minute timing"]);
     const last = card(svg, "Day 1 · Correct");
     expect(last?.lines).toHaveLength(4);
@@ -749,12 +715,13 @@ describe("renderChart cards", () => {
   });
 
   it("gives each line its celeration per week", () => {
-    const corrects = Array.from({ length: 15 }, (_, day) => 10 * 2 ** (day / 7));
-    const errors = Array.from({ length: 15 }, (_, day) => 4 / 2 ** (day / 7));
+    // Whole counts in 10 minute timings, close enough to ×2 and ÷2 a week to round to them.
+    const corrects = Array.from({ length: 15 }, (_, day) => Math.round(1000 * 2 ** (day / 7)));
+    const errors = Array.from({ length: 15 }, (_, day) => Math.round(400 / 2 ** (day / 7)));
     const svg = renderChart({
       corrects,
       errors,
-      timingSeconds,
+      timingSeconds: corrects.map(() => 600),
       phases: [{ name: "Practice", aim: 1000, celeration: 1.5 }],
     });
     expect(card(svg, "Learning line")?.lines).toEqual(["Learning line", "×1.5 per week"]);
@@ -779,11 +746,11 @@ describe("renderChart cards", () => {
   });
 
   it("puts an easier-to-point-at area with each mark and line", () => {
-    const svg = renderChart({ corrects: [10, 12], errors: [1, 1], timingSeconds });
+    const svg = timed({ corrects: [10, 12], errors: [1, 1] });
     expect(svg.match(/<g class="mark"[^>]*><circle class="correct"[^>]*\/><circle class="hover-area"/g)).toHaveLength(2);
     expect(svg.match(/<g class="mark"[^>]*><path class="error"[^>]*\/><circle class="hover-area"/g)).toHaveLength(2);
     expect(svg.match(/<g class="trend"[^>]*><path class="fit[^>]*\/><path class="hover-area"/g)).toHaveLength(2);
-    expect(svg.match(/<g class="mark"[^>]*><path class="floor"[^>]*\/><circle class="hover-area"/g)).toHaveLength(20);
+    expect(svg.match(/<g class="mark"[^>]*><path class="floor"[^>]*\/><circle class="hover-area"/g)).toHaveLength(2);
     const aimed = renderChart({ phases: [{ name: "Practice", aim: 40 }] });
     expect(aimed).toMatch(/<g class="mark"[^>]*><path class="aim"[^>]*\/><circle class="hover-area"[^>]* r="3"/);
   });
@@ -836,10 +803,102 @@ describe("renderChart dates", () => {
   });
 
   it("dates the cards", () => {
-    const svg = renderChart({ startDate: "2026-09-07", corrects: [10, -1, 20], timingSeconds: [60, 60, 60] });
+    const svg = renderChart({ startDate: "2026-09-07", corrects: [10, -1, 20], timingSeconds: [60, -1, 60] });
     const lines = svg.match(/data-card="(Mon, Sep 7 · Correct[^"]*)"/)?.[1]?.split("&#10;");
     expect(lines?.[3]).toMatch(/^Wed, Sep 9 target/);
     expect(lines?.[4]).toBe("Wed, Sep 9: 20 per minute — Hit");
     expect(svg).toContain('data-card="Mon, Sep 7 · Record floor');
+  });
+});
+
+describe("renderChart validation", () => {
+  const throwsFor = (options: unknown) => expect(() => renderChart(options as ChartOptions));
+
+  it("draws a full chart of valid data without throwing", () => {
+    const counts = Array.from({ length: DAYS + 1 }, (_, day) => (day % 7 === 0 ? -1 : 10));
+    expect(() => timed({ corrects: counts, errors: counts, phases: [{ name: "A", endDay: DAYS }] })).not.toThrow();
+    // September 9th 2026 is a Wednesday, leaving room for three fewer days.
+    expect(() => timed({ corrects: Array<number>(DAYS - 2).fill(10), startDate: "2026-09-09" })).not.toThrow();
+  });
+
+  it("throws for lists of different lengths", () => {
+    throwsFor({ corrects: [5, 5, 5], timingSeconds: [60] }).toThrow(
+      "corrects, errors and timingSeconds must have one entry for each day, but corrects has 3, timingSeconds has 1",
+    );
+    throwsFor({ corrects: [5, 5], errors: [1], timingSeconds: [60, 60] }).toThrow("errors has 1");
+    throwsFor({ corrects: [5], timingSeconds: [60, 60] }).toThrow(RangeError);
+  });
+
+  it("throws for counts without timings", () => {
+    throwsFor({ corrects: [5] }).toThrow("corrects need timingSeconds to be plotted per minute");
+    throwsFor({ corrects: [5], errors: [1] }).toThrow("corrects and errors need timingSeconds");
+  });
+
+  it("throws unless each day is timed with every count, or unrecorded in every list", () => {
+    throwsFor({ corrects: [5, 5], timingSeconds: [60, -1] }).toThrow("Day 1 has corrects of 5 but no timing");
+    throwsFor({ corrects: [5, -1], timingSeconds: [60, 60] }).toThrow("Day 1 has a timing but no corrects");
+    throwsFor({ corrects: [5, 5], errors: [1, -1], timingSeconds: [60, 60] }).toThrow("Day 1 has a timing but no errors");
+  });
+
+  it("throws for anything but a number, naming it", () => {
+    throwsFor({ corrects: [5, null], timingSeconds: [60, 60] }).toThrow("corrects[1] must be a number, got null");
+    throwsFor({ corrects: [5, ""], timingSeconds: [60, 60] }).toThrow('corrects[1] must be a number, got ""');
+    throwsFor({ corrects: ["5"], timingSeconds: [60] }).toThrow('corrects[0] must be a number, got "5"');
+    throwsFor({ errors: [NaN], timingSeconds: [60] }).toThrow(TypeError);
+    // eslint-disable-next-line no-sparse-arrays
+    throwsFor({ corrects: [5, , 5], timingSeconds: [60, 60, 60] }).toThrow("corrects[1] must be a number, got undefined");
+    throwsFor({ corrects: [5], timingSeconds: [Infinity] }).toThrow(TypeError);
+    throwsFor({ corrects: "5, 5", timingSeconds: [60] }).toThrow("corrects must be an array of numbers");
+  });
+
+  it("throws for counts that are not whole numbers of 0 or more, or -1", () => {
+    throwsFor({ corrects: [2.5], timingSeconds: [60] }).toThrow("corrects[0] must be a whole count of 0 or more, or -1");
+    throwsFor({ errors: [-2], timingSeconds: [60] }).toThrow(RangeError);
+  });
+
+  it("throws for timings without a record floor on the chart, and for 0 instead of -1", () => {
+    throwsFor({ timingSeconds: [0] }).toThrow("timingSeconds[0] must be from 0.06 to 60000 seconds, or -1 for no timing, got 0");
+    throwsFor({ timingSeconds: [0.03] }).toThrow(RangeError);
+    throwsFor({ timingSeconds: [2000 * 60] }).toThrow(RangeError);
+    expect(() => renderChart({ timingSeconds: [0.06, 60000] })).not.toThrow();
+  });
+
+  it("throws for a rate above the top of the chart", () => {
+    throwsFor({ corrects: [1001], timingSeconds: [60] }).toThrow(
+      "Day 0 has corrects of 1001 in 60 seconds, above the chart's 1000 per minute",
+    );
+  });
+
+  it("throws for days past the end of the chart, counting from the start date", () => {
+    throwsFor({ timingSeconds: Array<number>(DAYS + 2).fill(60) }).toThrow(
+      `timingSeconds has ${DAYS + 2} days, but the chart only has room for ${DAYS + 1} days`,
+    );
+    throwsFor({ timingSeconds: Array<number>(DAYS - 1).fill(60), startDate: "2026-09-09" }).toThrow(
+      `room for ${DAYS - 2} days from its start date`,
+    );
+  });
+
+  it("throws for phases that end out of order, part way through a day or past the chart", () => {
+    throwsFor({ phases: [{ name: "A", endDay: 10 }, { name: "B", endDay: 5 }] }).toThrow(
+      'Phase "B" needs an endDay on or after day 11, got 5',
+    );
+    throwsFor({ phases: [{ name: "A", endDay: 2.5 }, { name: "B" }] }).toThrow(
+      'Phase "A" needs an endDay on or after day 0, got 2.5',
+    );
+    throwsFor({ phases: [{ name: "A", endDay: DAYS + 1 }] }).toThrow(`Phase "A" ends on day ${DAYS + 1}, but`);
+    throwsFor({ phases: [{ name: "A", endDay: DAYS }, { name: "B" }] }).toThrow(`Phase "B" starts on day ${DAYS + 1}, but`);
+  });
+
+  it("throws for aims off the chart and celerations that are not above 0", () => {
+    throwsFor({ phases: [{ name: "A", aim: 2000 }] }).toThrow('Phase "A" needs an aim from 0.001 to 1000 per minute, got 2000');
+    throwsFor({ phases: [{ name: "A", aim: 0 }] }).toThrow(RangeError);
+    throwsFor({ phases: [{ name: "A", celeration: 0 }] }).toThrow('Phase "A" needs a celeration above 0, got 0');
+    throwsFor({ phases: [{ name: "A", celeration: -2 }] }).toThrow(RangeError);
+    throwsFor({ phases: [{ name: "A", celeration: NaN }] }).toThrow(RangeError);
+  });
+
+  it("throws for phases without a name", () => {
+    throwsFor({ phases: [{ endDay: 3 }] }).toThrow("phases[0] must have a name, got undefined");
+    throwsFor({ phases: [null] }).toThrow("phases[0] must be an object, got null");
   });
 });

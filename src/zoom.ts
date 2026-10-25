@@ -126,21 +126,22 @@ export function enableZoom(svg: SVGSVGElement): () => void {
     });
   }
 
-  let drag: { pointerId: number; clientX: number; clientY: number } | undefined;
+  let drag: { pointerId: number; clientX: number; clientY: number; pixelsPerUnit: number } | undefined;
   listen(plot, "pointerdown", (event) => {
     if (step === 0 || event.button !== 0) return;
-    drag = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY };
+    // Measured once per drag, as measuring makes the browser lay out the page.
+    // The plot's own box takes in everything drawn outside its viewport, so
+    // measure the whole chart, which has the same scale.
+    const pixelsPerUnit = svg.getBoundingClientRect().width / svg.viewBox.baseVal.width;
+    drag = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, pixelsPerUnit };
     plot.setPointerCapture(event.pointerId);
     plot.classList.add("dragging");
   });
   listen(plot, "pointermove", (event) => {
     if (event.pointerId !== drag?.pointerId) return;
-    // The plot's own box takes in everything drawn outside its viewport, so
-    // measure the whole chart, which has the same scale.
-    const pixelsPerUnit = svg.getBoundingClientRect().width / svg.viewBox.baseVal.width;
     const zoom = ZOOM_STEPS[step] ?? 1;
-    const dx = (event.clientX - drag.clientX) / pixelsPerUnit / zoom;
-    const dy = (event.clientY - drag.clientY) / pixelsPerUnit / zoom;
+    const dx = (event.clientX - drag.clientX) / drag.pixelsPerUnit / zoom;
+    const dy = (event.clientY - drag.clientY) / drag.pixelsPerUnit / zoom;
     drag = { ...drag, clientX: event.clientX, clientY: event.clientY };
     panned = true;
     const { x: cx, y: cy } = centre();

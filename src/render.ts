@@ -1,5 +1,6 @@
 import { type CalendarDate, dayToDate, daysSinceSunday, formatAxisDate, formatCardDate } from "./dates.js";
 import { DAYS, MAX_FREQUENCY, MIN_FREQUENCY, dayScale, frequencyScale, toFrequency } from "./scale.js";
+import { validateOptions } from "./validate.js";
 
 /** Angle at which a ×2 per week celeration line rises on a standard chart. */
 const CELERATION_ANGLE = 34;
@@ -102,21 +103,22 @@ export interface Phase {
 export interface ChartOptions {
   /**
    * Correct counts, one per consecutive day starting at day 0, each divided by
-   * that day's timing to plot it per minute. A negative count, or a day without
-   * a timing, marks a day with nothing recorded. A count of zero is drawn just
-   * under the day's record floor, beside a zero error if there is one.
-   * Frequencies or record floors outside .001–1000 and days past the last day
-   * of the chart are not drawn. A dashed best fit line runs through the
-   * counts in each phase, or the whole chart without phases.
+   * that day's timing to plot it per minute. Each is a whole number of 0 or
+   * more on a day with a timing, and -1 on a day without one. A count of zero
+   * is drawn just under the day's record floor, beside a zero error if there is
+   * one. A dashed best fit line runs through the counts in each phase, or the
+   * whole chart without phases.
    */
   corrects?: readonly number[];
-  /** Error counts, drawn as an X with a red best fit line. Same format as `corrects`. */
+  /** Error counts, drawn as an X with a red best fit line. Same format as `corrects`, and the same length. */
   errors?: readonly number[];
   /**
    * Length of each day's timing in seconds, one per consecutive day starting at
    * day 0. Each is drawn as a dash at its record floor, the lowest frequency
    * the timing could record: one count in the timing (1 per minute for 60
-   * seconds, .1 for 600). Zero or a negative number marks a day with no timing.
+   * seconds, .1 for 600), so each is from .06 to 60000 seconds, or -1 for a
+   * day without a timing. Needed with `corrects` or `errors`, with one timing
+   * for each of their days.
    */
   timingSeconds?: readonly number[];
   /** Consecutive phases of the chart, starting at day 0. */
@@ -133,11 +135,16 @@ export interface ChartOptions {
 
 /**
  * Renders a daily per-minute Standard Celeration Chart as an SVG string.
+ * Throws a TypeError or RangeError, naming the day, for options it can't draw
+ * exactly as given: lists of different lengths, a count without a timing,
+ * anything past the end of the chart or off its scale.
  * The SVG fills the width of its container and keeps its proportions. Its zoom
  * control stays hidden until the chart is passed to enableZoom, and its marks
  * and lines show their details on hover once it is passed to enableHover.
  */
-export function renderChart({ phases = [], startDate, ...counts }: ChartOptions = {}): string {
+export function renderChart(options: ChartOptions = {}): string {
+  validateOptions(options);
+  const { phases = [], startDate, ...counts } = options;
   // A dated chart starts on the Sunday on or before the start date, leaving the
   // days between unrecorded. Counts, timings and end days still count from the
   // start date; everything below counts from the chart's first day.
@@ -146,16 +153,17 @@ export function renderChart({ phases = [], startDate, ...counts }: ChartOptions 
   const corrects = [...unrecorded, ...(counts.corrects ?? [])];
   const errors = [...unrecorded, ...(counts.errors ?? [])];
   const timingSeconds = [...unrecorded, ...(counts.timingSeconds ?? [])];
-  const dateOf = (day: number) => (startDate === undefined ? undefined : dayToDate(startDate, day - offset));
+  // Most days are named on several cards, and working out and writing a date is slow, so each is done once.
+  const dateOf = perDay((day) => (startDate === undefined ? undefined : dayToDate(startDate, day - offset)));
   /** How the x-axis and cards name a day: its date, or its number without a start date. */
   const axisDay = (day: number) => {
     const date = dateOf(day);
     return date ? formatAxisDate(date) : String(day);
   };
-  const cardDay = (day: number) => {
+  const cardDay = perDay((day) => {
     const date = dateOf(day);
     return date ? formatCardDate(date) : `Day ${day}`;
-  };
+  });
   const width = DAYS * DAY_WIDTH;
   const height = chartHeight(width);
   const x = dayScale({ left: 0, right: width });
@@ -165,39 +173,45 @@ export function renderChart({ phases = [], startDate, ...counts }: ChartOptions 
   const floorY = y(Math.min(...BELOW_FLOOR));
   const weekTailY = height + cycle * WEEK_TAIL;
   const nubY = zeroY - cycle * NUB;
-  // Each layer is drawn over the one before, so thick lines are never
-  // broken up by the thin lines that cross them.
-  const thinRows: string[] = [];
-  const thinColumns: string[] = [];
-  const thickRows: string[] = [];
-  const thickColumns: string[] = [];
+  // Each kind of grid line is one path, as hundreds of separate lines would
+  // each be redrawn whenever the chart zooms or pans. The paths are drawn in
+  // this order, so thick lines are never broken up by the thin lines that
+  // cross them: thin rows, thin columns, thick rows, then thick columns.
+  const grid = {
+    unit: [] as string[],
+    day: [] as string[],
+    "day nub": [] as string[],
+    decade: [] as string[],
+    half: [] as string[],
+    zero: [] as string[],
+    week: [] as string[],
+    "week nub": [] as string[],
+  };
+  const row = (cls: keyof typeof grid, rowY: number) => grid[cls].push(`M0 ${round(rowY)}H${round(width)}`);
+  const column = (cls: keyof typeof grid, columnX: number, top: number, bottom: number) =>
+    grid[cls].push(`M${round(columnX)} ${round(top)}V${round(bottom)}`);
   const parts: string[] = [];
 
   for (let power = LOWEST_POWER; power <= HIGHEST_POWER; power++) {
     const decade = 10 ** power;
-    thickRows.push(line(0, y(decade), width, y(decade), "decade"));
+    row("decade", y(decade));
     parts.push(text(-4, y(decade) + 2, formatFrequency(decade), "y-label", { y: y(decade) }));
     if (power === HIGHEST_POWER) break;
-    for (let n = 2; n <= 9; n++) {
-      const row = line(0, y(n * decade), width, y(n * decade), n === 5 ? "half" : "unit");
-      (n === 5 ? thickRows : thinRows).push(row);
-    }
+    for (let n = 2; n <= 9; n++) row(n === 5 ? "half" : "unit", y(n * decade));
     const half = 5 * decade;
     parts.push(text(-4, y(half) + 1.5, formatFrequency(half), "y-label half-label", { y: y(half) }));
   }
-  for (const frequency of BELOW_FLOOR) {
-    thinRows.push(line(0, y(frequency), width, y(frequency), "unit"));
-  }
-  thickRows.push(line(0, zeroY, width, zeroY, "zero"));
+  for (const frequency of BELOW_FLOOR) row("unit", y(frequency));
+  row("zero", zeroY);
   parts.push(text(-4, zeroY + 2, "0", "y-label", { y: zeroY }));
 
   for (let day = 0; day <= DAYS; day++) {
     if (day % 7 === 0) {
-      thickColumns.push(line(x(day), 0, x(day), weekTailY, "week"));
-      thickColumns.push(line(x(day), nubY, x(day), zeroY, "week nub"));
+      column("week", x(day), 0, weekTailY);
+      column("week nub", x(day), nubY, zeroY);
     } else {
-      thinColumns.push(line(x(day), 0, x(day), floorY, "day"));
-      thinColumns.push(line(x(day), nubY, x(day), zeroY, "day nub"));
+      column("day", x(day), 0, floorY);
+      column("day nub", x(day), nubY, zeroY);
     }
   }
   for (let day = 0; day <= DAYS; day += 14) {
@@ -350,10 +364,7 @@ export function renderChart({ phases = [], startDate, ...counts }: ChartOptions 
     `<svg class="plot" x="${plot[0]}" y="${plot[1]}" width="${plot[2]}" height="${plot[3]}" viewBox="${plot.join(" ")}"${focusAttribute}>`,
     // Unpainted, but catches the pointer between the lines so a drag can start anywhere.
     `<rect class="plot-area" x="${plot[0]}" y="${plot[1]}" width="${plot[2]}" height="${plot[3]}"/>`,
-    ...thinRows,
-    ...thinColumns,
-    ...thickRows,
-    ...thickColumns,
+    ...Object.entries(grid).map(([cls, lines]) => `<path class="grid ${cls}" d="${lines.join("")}"/>`),
     ...phaseLines,
     ...learning.flatMap((line) =>
       line && line.end > line.start ? [trendPath(line, "learning", "Learning line")] : [],
@@ -375,7 +386,7 @@ export function renderChart({ phases = [], startDate, ...counts }: ChartOptions 
 
 const STYLE = `
 /* Strokes are in screen pixels, so lines stay hairlines however far the chart is scaled. */
-line { stroke: #4a9fd8; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.grid { fill: none; stroke: #4a9fd8; stroke-width: 1; vector-effect: non-scaling-stroke; }
 .day, .unit { stroke: #c4e0f4; }
 .half { stroke: #8cc4e9; }
 .week, .decade, .zero { stroke-width: 2; }
@@ -443,14 +454,9 @@ interface PhaseSpan {
  */
 function phaseSpans(phases: readonly Phase[], offset: number): PhaseSpan[] {
   let start = 0;
-  return phases.map((phase, index) => {
-    const isLast = index === phases.length - 1;
+  return phases.map((phase) => {
+    // validateOptions has checked that every phase but the last has an endDay.
     const end = phase.endDay ?? DAYS - offset;
-    if (!isLast && !(Number.isFinite(phase.endDay) && end >= start)) {
-      throw new RangeError(
-        `Phase "${phase.name}" needs an endDay on or after day ${start}, got ${phase.endDay}`,
-      );
-    }
     const span = { phase, start: start + offset, end: end + offset };
     start = end + 1;
     return span;
@@ -673,6 +679,15 @@ function perMinute(counts: readonly number[], timingSeconds: readonly number[]):
   });
 }
 
+/** `name`, remembering what it gave for each day so it runs once per day. */
+function perDay<T>(name: (day: number) => T): (day: number) => T {
+  const named = new Map<number, T>();
+  return (day) => {
+    if (!named.has(day)) named.set(day, name(day));
+    return named.get(day) as T;
+  };
+}
+
 function isPlottable(frequency: number): boolean {
   return frequency >= MIN_FREQUENCY && frequency <= MAX_FREQUENCY;
 }
@@ -727,10 +742,6 @@ function zoomControl(right: number, top: number): string {
     button(zoomInLeft, "zoom-in", "Zoom in", "+"),
     `</g>`,
   ].join("\n");
-}
-
-function line(x1: number, y1: number, x2: number, y2: number, cls: string): string {
-  return `<line class="${cls}" x1="${round(x1)}" y1="${round(y1)}" x2="${round(x2)}" y2="${round(y2)}"/>`;
 }
 
 /** `data` records where an axis label's grid line is, for enableZoom to move it with the grid. */
