@@ -1,5 +1,6 @@
 import { type CalendarDate, dayToDate, daysSinceSunday, formatAxisDate, formatCardDate } from "./dates.js";
 import { DAYS, MAX_FREQUENCY, MIN_FREQUENCY, dayScale, frequencyScale, toFrequency } from "./scale.js";
+import { validateOptions } from "./validate.js";
 
 /** Angle at which a ×2 per week celeration line rises on a standard chart. */
 const CELERATION_ANGLE = 34;
@@ -102,22 +103,22 @@ export interface Phase {
 export interface ChartOptions {
   /**
    * Correct counts, one per consecutive day starting at day 0, each divided by
-   * that day's timing to plot it per minute. A negative count marks a day with
-   * nothing recorded. A count on a day without a timing is not drawn either, and
-   * renderChart warns about it in the console. A count of zero is drawn just
-   * under the day's record floor, beside a zero error if there is one.
-   * Frequencies or record floors outside .001–1000 and days past the last day
-   * of the chart are not drawn. A dashed best fit line runs through the
-   * counts in each phase, or the whole chart without phases.
+   * that day's timing to plot it per minute. Each is a whole number of 0 or
+   * more on a day with a timing, and -1 on a day without one. A count of zero
+   * is drawn just under the day's record floor, beside a zero error if there is
+   * one. A dashed best fit line runs through the counts in each phase, or the
+   * whole chart without phases.
    */
   corrects?: readonly number[];
-  /** Error counts, drawn as an X with a red best fit line. Same format as `corrects`. */
+  /** Error counts, drawn as an X with a red best fit line. Same format as `corrects`, and the same length. */
   errors?: readonly number[];
   /**
    * Length of each day's timing in seconds, one per consecutive day starting at
    * day 0. Each is drawn as a dash at its record floor, the lowest frequency
    * the timing could record: one count in the timing (1 per minute for 60
-   * seconds, .1 for 600). Zero or a negative number marks a day with no timing.
+   * seconds, .1 for 600), so each is from .06 to 60000 seconds, or -1 for a
+   * day without a timing. Needed with `corrects` or `errors`, with one timing
+   * for each of their days.
    */
   timingSeconds?: readonly number[];
   /** Consecutive phases of the chart, starting at day 0. */
@@ -134,12 +135,16 @@ export interface ChartOptions {
 
 /**
  * Renders a daily per-minute Standard Celeration Chart as an SVG string.
+ * Throws a TypeError or RangeError, naming the day, for options it can't draw
+ * exactly as given: lists of different lengths, a count without a timing,
+ * anything past the end of the chart or off its scale.
  * The SVG fills the width of its container and keeps its proportions. Its zoom
  * control stays hidden until the chart is passed to enableZoom, and its marks
  * and lines show their details on hover once it is passed to enableHover.
  */
-export function renderChart({ phases = [], startDate, ...counts }: ChartOptions = {}): string {
-  warnMissingTimings(counts.corrects ?? [], counts.errors ?? [], counts.timingSeconds ?? []);
+export function renderChart(options: ChartOptions = {}): string {
+  validateOptions(options);
+  const { phases = [], startDate, ...counts } = options;
   // A dated chart starts on the Sunday on or before the start date, leaving the
   // days between unrecorded. Counts, timings and end days still count from the
   // start date; everything below counts from the chart's first day.
@@ -449,14 +454,9 @@ interface PhaseSpan {
  */
 function phaseSpans(phases: readonly Phase[], offset: number): PhaseSpan[] {
   let start = 0;
-  return phases.map((phase, index) => {
-    const isLast = index === phases.length - 1;
+  return phases.map((phase) => {
+    // validateOptions has checked that every phase but the last has an endDay.
     const end = phase.endDay ?? DAYS - offset;
-    if (!isLast && !(Number.isFinite(phase.endDay) && end >= start)) {
-      throw new RangeError(
-        `Phase "${phase.name}" needs an endDay on or after day ${start}, got ${phase.endDay}`,
-      );
-    }
     const span = { phase, start: start + offset, end: end + offset };
     start = end + 1;
     return span;
@@ -677,27 +677,6 @@ function perMinute(counts: readonly number[], timingSeconds: readonly number[]):
     const seconds = timingSeconds[day] ?? -1;
     return count >= 0 && seconds > 0 ? toFrequency(count, seconds / 60) : -1;
   });
-}
-
-/**
- * Warns in the console about days with a count but no timing, which can't be
- * plotted per minute and so are left off the chart. Days are numbered as passed,
- * from the start date.
- */
-function warnMissingTimings(
-  corrects: readonly number[],
-  errors: readonly number[],
-  timingSeconds: readonly number[],
-): void {
-  const days = Array.from({ length: Math.max(corrects.length, errors.length) }, (_, day) => day).filter(
-    (day) => ((corrects[day] ?? -1) >= 0 || (errors[day] ?? -1) >= 0) && !((timingSeconds[day] ?? -1) > 0),
-  );
-  if (days.length === 0) return;
-  const shown = days.slice(0, 10).join(", ") + (days.length > 10 ? `, and ${days.length - 10} more` : "");
-  console.warn(
-    `renderChart: ${days.length === 1 ? "day" : "days"} ${shown} ${days.length === 1 ? "has" : "have"} a count but no timing, ` +
-      "so nothing is drawn for them. Give each day with a count a positive timingSeconds.",
-  );
 }
 
 /** `name`, remembering what it gave for each day so it runs once per day. */
