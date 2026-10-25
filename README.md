@@ -59,11 +59,11 @@ The daily lists (`corrects`, `errors` and `timingSeconds`) also follow these
 rules together:
 
 - Every list you pass has one entry per day, so they are all the same length.
-- `-1` indicates that a day doesn't have any data to plot (no timing). `corrects`,
-  `errors`, and `timingSeconds` must all have a `-1`. Otherwise, each input should
-  have a value `>=0`.
+- `-1` indicates that a day doesn't have any data to plot (no timing). On that
+  day, every list you pass must have a `-1`. Otherwise, each list should have a
+  value `>=0`.
 - No count can be more than 1000 per minute.
-- Every value in the arrray is a number. `null`, `undefined`, `NaN` and strings like `"12"`
+- Every value in the array is a number. `null`, `undefined`, `NaN` and strings like `"12"`
   are rejected, so convert data from forms or JSON first.
 - The data must fit on the chart's 141 days, or fewer with a `startDate` later
   in its week, as the chart starts on the Sunday before.
