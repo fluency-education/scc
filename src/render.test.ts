@@ -840,6 +840,13 @@ describe("renderChart validation", () => {
     throwsFor({ corrects: [5, 5], errors: [1, -1], timingSeconds: [60, 60] }).toThrow("Day 1 has a timing but no errors");
   });
 
+  it("plots corrects or errors alone, left out or null", () => {
+    expect(() => renderChart({ corrects: [5, -1], errors: null, timingSeconds: [60, -1] })).not.toThrow();
+    const svg = renderChart({ corrects: null, errors: [2], timingSeconds: [60] });
+    expect(svg).not.toContain('<circle class="correct"');
+    expect(svg).toContain('<path class="error"');
+  });
+
   it("throws for anything but a number, naming it", () => {
     throwsFor({ corrects: [5, null], timingSeconds: [60, 60] }).toThrow("corrects[1] must be a number, got null");
     throwsFor({ corrects: [5, ""], timingSeconds: [60, 60] }).toThrow('corrects[1] must be a number, got ""');

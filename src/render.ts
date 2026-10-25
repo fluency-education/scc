@@ -107,11 +107,11 @@ export interface ChartOptions {
    * more on a day with a timing, and -1 on a day without one. A count of zero
    * is drawn just under the day's record floor, beside a zero error if there is
    * one. A dashed best fit line runs through the counts in each phase, or the
-   * whole chart without phases.
+   * whole chart without phases. Leave it out, or pass null, to plot errors alone.
    */
-  corrects?: readonly number[];
+  corrects?: readonly number[] | null;
   /** Error counts, drawn as an X with a red best fit line. Same format as `corrects`, and the same length. */
-  errors?: readonly number[];
+  errors?: readonly number[] | null;
   /**
    * Length of each day's timing in seconds, one per consecutive day starting at
    * day 0. Each is drawn as a dash at its record floor, the lowest frequency

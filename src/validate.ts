@@ -17,7 +17,7 @@ export function validateOptions({ corrects, errors, timingSeconds, phases, start
   // The last day the chart has room for, counting from the start date.
   const lastDay = DAYS - (startDate === undefined ? 0 : daysSinceSunday(startDate));
   const room = `the chart only has room for ${lastDay + 1} days${startDate === undefined ? "" : " from its start date"}`;
-  const counts = Object.entries({ corrects, errors }).flatMap(([name, list]) => (list === undefined ? [] : [{ name, list }]));
+  const counts = Object.entries({ corrects, errors }).flatMap(([name, list]) => (list == null ? [] : [{ name, list }]));
   const lists = timingSeconds === undefined ? counts : [...counts, { name: "timingSeconds", list: timingSeconds }];
 
   for (const { name, list } of lists) {
