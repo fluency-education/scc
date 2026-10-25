@@ -1,4 +1,8 @@
 {
   "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // The package ships dist/ without src/, so the source maps carry the sources.
+    "inlineSources": true
+  },
   "exclude": ["src/**/*.test.ts"]
 }

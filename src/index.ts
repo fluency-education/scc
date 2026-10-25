@@ -1,5 +1,4 @@
-export * from "./render.js";
-export * from "./scale.js";
-export * from "./zoom.js";
-export * from "./hover.js";
-export * from "./dates.js";
+export { type ChartOptions, type Phase, renderChart } from "./render.js";
+export { enableZoom } from "./zoom.js";
+export { enableHover } from "./hover.js";
+export type { CalendarDate } from "./dates.js";

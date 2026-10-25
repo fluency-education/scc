@@ -145,7 +145,7 @@ export function enableZoom(svg: SVGSVGElement): () => void {
     drag = { ...drag, clientX: event.clientX, clientY: event.clientY };
     panned = true;
     const { x: cx, y: cy } = centre();
-    show(zoomView(frame, ZOOM_STEPS[step] ?? 1, { x: cx - dx, y: cy - dy }));
+    show(zoomView(frame, zoom, { x: cx - dx, y: cy - dy }));
   });
   const endDrag = (event: PointerEvent) => {
     if (event.pointerId !== drag?.pointerId) return;
