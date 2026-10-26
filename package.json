@@ -8,6 +8,13 @@
     "chart"
   ],
   "license": "MIT",
+  "author": "clayton-schneider",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fluency-education/scc.git"
+  },
+  "homepage": "https://github.com/fluency-education/scc#readme",
+  "bugs": "https://github.com/fluency-education/scc/issues",
   "type": "module",
   "types": "./dist/index.d.ts",
   "exports": {
