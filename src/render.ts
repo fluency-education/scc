@@ -358,7 +358,7 @@ export function renderChart(options: ChartOptions = {}): string {
   const totalWidth = width + MARGIN.left + MARGIN.right;
   const totalHeight = zeroY + MARGIN.top + MARGIN.bottom;
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${round(totalWidth)} ${round(totalHeight)}" style="display: block; width: 100%; height: auto">`,
+    `<svg class="scc" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${round(totalWidth)} ${round(totalHeight)}" style="display: block; width: 100%; height: auto">`,
     `<style>${STYLE}</style>`,
     `<g transform="translate(${MARGIN.left} ${MARGIN.top})">`,
     `<svg class="plot" x="${plot[0]}" y="${plot[1]}" width="${plot[2]}" height="${plot[3]}" viewBox="${plot.join(" ")}"${focusAttribute}>`,
@@ -386,47 +386,47 @@ export function renderChart(options: ChartOptions = {}): string {
 
 const STYLE = `
 /* Strokes are in screen pixels, so lines stay hairlines however far the chart is scaled. */
-.grid { fill: none; stroke: #4a9fd8; stroke-width: 1; vector-effect: non-scaling-stroke; }
-.day, .unit { stroke: #c4e0f4; }
-.half { stroke: #8cc4e9; }
-.week, .decade, .zero { stroke-width: 2; }
-.correct { fill: #111; }
-.floor { stroke: #111; stroke-width: 1.25; vector-effect: non-scaling-stroke; }
-.error { stroke: #d62828; stroke-width: 1.25; fill: none; vector-effect: non-scaling-stroke; }
-text { font-family: system-ui, sans-serif; fill: #1f5f8b; }
-.x-label { font-size: 5.5px; text-anchor: middle; }
-.y-label { font-size: 5.5px; text-anchor: end; }
-.half-label { font-size: 4.5px; opacity: 0.8; }
-.title { font-size: 6.5px; text-anchor: middle; }
-.phase { stroke: #111; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-.learning { stroke: #111; stroke-width: 1.25; fill: none; vector-effect: non-scaling-stroke; }
-.fit { fill: none; stroke-width: 1.25; stroke-dasharray: 5 3; vector-effect: non-scaling-stroke; }
-.correct-fit { stroke: #111; }
-.error-fit { stroke: #d62828; }
-.aim { fill: #ffd60a; stroke: #1f5f8b; stroke-width: 1; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
-.zoom { display: none; }
-.zoomable .zoom { display: inline; }
-.zoom-button { cursor: pointer; }
-.zoom-button rect { fill: #fff; stroke: #4a9fd8; stroke-width: 1; vector-effect: non-scaling-stroke; }
-.zoom-button path { stroke: #1f5f8b; stroke-width: 1.25; vector-effect: non-scaling-stroke; }
-.zoom-button:hover rect, .zoom-button:focus-visible rect { fill: #e8f3fb; }
-.zoom-button:focus { outline: none; }
-.zoom-button:focus-visible rect { stroke: #1f5f8b; stroke-width: 2; }
-.zoom-button.disabled { cursor: default; opacity: 0.35; }
-.zoom-level { font-size: 5px; text-anchor: middle; }
-.plot-area { fill: none; pointer-events: all; }
-.plot.zoomed { cursor: grab; touch-action: none; user-select: none; }
-.plot.dragging { cursor: grabbing; }
-.hover-area { fill: none; stroke: none; pointer-events: all; }
-.trend .hover-area { stroke-width: 8px; vector-effect: non-scaling-stroke; pointer-events: stroke; }
-.trend:hover path:first-child { stroke-width: 2; }
-.card { pointer-events: none; }
-.card rect { fill: #fff; stroke: #1f5f8b; stroke-width: 1; vector-effect: non-scaling-stroke; }
-.card text { font-size: 5px; fill: #111; }
-.card .card-title { font-weight: 600; }
-.card .hit { fill: #1b7f3b; font-weight: 600; }
-.card .miss { fill: #d62828; font-weight: 600; }
-.phase-name { font-size: ${PHASE_FONT_SIZE}px; text-anchor: middle; fill: #111; paint-order: stroke; stroke: #fff; stroke-width: 1.5px; stroke-linejoin: round; }
+.scc .grid { fill: none; stroke: #4a9fd8; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.scc .day, .scc .unit { stroke: #c4e0f4; }
+.scc .half { stroke: #8cc4e9; }
+.scc .week, .scc .decade, .scc .zero { stroke-width: 2; }
+.scc .correct { fill: #111; }
+.scc .floor { stroke: #111; stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.scc .error { stroke: #d62828; stroke-width: 1.25; fill: none; vector-effect: non-scaling-stroke; }
+.scc text { font-family: system-ui, sans-serif; fill: #1f5f8b; }
+.scc .x-label { font-size: 5.5px; text-anchor: middle; }
+.scc .y-label { font-size: 5.5px; text-anchor: end; }
+.scc .half-label { font-size: 4.5px; opacity: 0.8; }
+.scc .title { font-size: 6.5px; text-anchor: middle; }
+.scc .phase { stroke: #111; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.scc .learning { stroke: #111; stroke-width: 1.25; fill: none; vector-effect: non-scaling-stroke; }
+.scc .fit { fill: none; stroke-width: 1.25; stroke-dasharray: 5 3; vector-effect: non-scaling-stroke; }
+.scc .correct-fit { stroke: #111; }
+.scc .error-fit { stroke: #d62828; }
+.scc .aim { fill: #ffd60a; stroke: #1f5f8b; stroke-width: 1; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.scc .zoom { display: none; }
+.scc.zoomable .zoom { display: inline; }
+.scc .zoom-button { cursor: pointer; }
+.scc .zoom-button rect { fill: #fff; stroke: #4a9fd8; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.scc .zoom-button path { stroke: #1f5f8b; stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.scc .zoom-button:hover rect, .scc .zoom-button:focus-visible rect { fill: #e8f3fb; }
+.scc .zoom-button:focus { outline: none; }
+.scc .zoom-button:focus-visible rect { stroke: #1f5f8b; stroke-width: 2; }
+.scc .zoom-button.disabled { cursor: default; opacity: 0.35; }
+.scc .zoom-level { font-size: 5px; text-anchor: middle; }
+.scc .plot-area { fill: none; pointer-events: all; }
+.scc .plot.zoomed { cursor: grab; touch-action: none; user-select: none; }
+.scc .plot.dragging { cursor: grabbing; }
+.scc .hover-area { fill: none; stroke: none; pointer-events: all; }
+.scc .trend .hover-area { stroke-width: 8px; vector-effect: non-scaling-stroke; pointer-events: stroke; }
+.scc .trend:hover path:first-child { stroke-width: 2; }
+.scc .card { pointer-events: none; }
+.scc .card rect { fill: #fff; stroke: #1f5f8b; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.scc .card text { font-size: 5px; fill: #111; }
+.scc .card .card-title { font-weight: 600; }
+.scc .card .hit { fill: #1b7f3b; font-weight: 600; }
+.scc .card .miss { fill: #d62828; font-weight: 600; }
+.scc .phase-name { font-size: ${PHASE_FONT_SIZE}px; text-anchor: middle; fill: #111; paint-order: stroke; stroke: #fff; stroke-width: 1.5px; stroke-linejoin: round; }
 `;
 
 interface Point {

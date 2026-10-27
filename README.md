@@ -104,6 +104,13 @@ const disableZoom = enableZoom(chart);
 const disableHover = enableHover(chart);
 ```
 
+### Styling
+
+The chart carries its own styles in a `<style>` inside the `<svg>`. Every rule is
+scoped under the root `<svg>`'s `scc` class, so it styles only the chart and none
+of the rest of the page. To restyle part of the chart, use a selector more
+specific than the chart's own, such as `#chart .scc .grid { stroke: #999; }`.
+
 ## Examples
 
 [`examples/index.html`](examples/index.html) shows each of these in a working

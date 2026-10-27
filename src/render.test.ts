@@ -43,6 +43,15 @@ describe("renderChart", () => {
     expect(svg).not.toMatch(/^<svg[^>]* width="/);
   });
 
+  it("scopes every style rule to the chart, so none reach the rest of the page", () => {
+    expect(svg).toMatch(/^<svg class="scc"/);
+    const style = svg.match(/<style>([^<]*)<\/style>/)?.[1] ?? "";
+    const rules = style.replace(/\/\*.*?\*\//gs, "").split("}").filter((rule) => rule.trim());
+    const selectors = rules.flatMap((rule) => (rule.split("{")[0] ?? "").split(",").map((selector) => selector.trim()));
+    expect(selectors.length).toBeGreaterThan(40);
+    for (const selector of selectors) expect(selector).toMatch(/^\.scc[ .]/);
+  });
+
   it("draws thin lines first, then thick horizontal lines, then thick vertical lines", () => {
     const order = [...svg.matchAll(/<path class="grid (\w+)/g)].map((match) => match[1]);
     const layer = (cls: string | undefined) =>
@@ -649,7 +658,7 @@ describe("renderChart zoom", () => {
     expect(svg).toContain('aria-label="Zoom out"');
     expect(svg).toContain(">1×</text>");
     expect(svg).toContain(".zoom { display: none; }");
-    expect(svg).toContain(".zoomable .zoom { display: inline; }");
+    expect(svg).toContain(".scc.zoomable .zoom { display: inline; }");
   });
 });
 
