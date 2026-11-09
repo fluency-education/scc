@@ -390,8 +390,8 @@ const STYLE = `
 .scc .day, .scc .unit { stroke: #c4e0f4; }
 .scc .half { stroke: #8cc4e9; }
 .scc .week, .scc .decade, .scc .zero { stroke-width: 2; }
-.scc .correct { fill: #111; }
-.scc .floor { stroke: #111; stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.scc .correct { fill: #0a2463; }
+.scc .floor { stroke: #7b2cbf; stroke-width: 2; vector-effect: non-scaling-stroke; }
 .scc .error { stroke: #d62828; stroke-width: 1.25; fill: none; vector-effect: non-scaling-stroke; }
 .scc text { font-family: system-ui, sans-serif; fill: #1f5f8b; }
 .scc .x-label { font-size: 5.5px; text-anchor: middle; }
@@ -399,9 +399,9 @@ const STYLE = `
 .scc .half-label { font-size: 4.5px; opacity: 0.8; }
 .scc .title { font-size: 6.5px; text-anchor: middle; }
 .scc .phase { stroke: #111; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-.scc .learning { stroke: #111; stroke-width: 1.25; fill: none; vector-effect: non-scaling-stroke; }
+.scc .learning { stroke: #2b9348; stroke-width: 1.25; fill: none; vector-effect: non-scaling-stroke; }
 .scc .fit { fill: none; stroke-width: 1.25; stroke-dasharray: 5 3; vector-effect: non-scaling-stroke; }
-.scc .correct-fit { stroke: #111; }
+.scc .correct-fit { stroke: #0a2463; }
 .scc .error-fit { stroke: #d62828; }
 .scc .aim { fill: #ffd60a; stroke: #1f5f8b; stroke-width: 1; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .scc .zoom { display: none; }
